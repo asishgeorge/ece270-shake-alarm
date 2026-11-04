@@ -4,14 +4,14 @@
     "type": "tab",
     "label": "Shake Alarm",
     "disabled": false,
-    "info": "# Shake Alarm\n\n**Already built for you (don't change):** pairing with your phone, the connection status,\nand the node that sends commands back to your phone.\n\n**You build** the part in the middle:\n\n1. A **function** \"shake level\" that turns ax, ay, az into one number.\n2. A **gauge** and a **chart** that show it.\n3. A **switch** that checks if it's above the threshold (flow.threshold).\n4. Two **change** nodes: set msg.payload to ALERT, or to OK.\n5. A **filter** node (block unless value changes).\n6. Wire the filter into \"send to my phone\".\n7. A **slider** wired into \"store threshold\".\n\nThen open http://127.0.0.1:1880/dashboard, type your pairing name, and shake your phone."
+    "info": "# Shake Alarm\n\n**Already built for you (don't change):** pairing with your phone, the connection status,\nand the node that sends commands back to your phone.\n\n**You build** the part in the middle:\n\n1. A **function** \"shake level\" that turns ax, ay, az into one number.\n2. A **gauge** and a **chart** that show it.\n3. A **switch** that checks if it's above the threshold (flow.threshold).\n4. Two **change** nodes: set msg.payload to ALERT, or to OK.\n5. A **filter** node (block unless value changes).\n6. Wire the filter into \"send to my phone\".\n7. A **slider** wired into \"store threshold\".\n8. *Optional:* a **range** node set to \"Scale and limit to the target range\", 0–30 to 0–30,\n   in front of the gauge and chart. A hard knock can reach 90+ m/s², which would overshoot the gauge.\n\nThen open http://127.0.0.1:1880/dashboard, type your pairing name, and shake your phone."
   },
   {
     "id": "e612b9c9af24afda",
     "type": "comment",
     "z": "98e3f94b01a2d59b",
     "name": "READ ME: Shake Alarm (double-click)",
-    "info": "# Shake Alarm\n\n**Already built for you (don't change):** pairing with your phone, the connection status,\nand the node that sends commands back to your phone.\n\n**You build** the part in the middle:\n\n1. A **function** \"shake level\" that turns ax, ay, az into one number.\n2. A **gauge** and a **chart** that show it.\n3. A **switch** that checks if it's above the threshold (flow.threshold).\n4. Two **change** nodes: set msg.payload to ALERT, or to OK.\n5. A **filter** node (block unless value changes).\n6. Wire the filter into \"send to my phone\".\n7. A **slider** wired into \"store threshold\".\n\nThen open http://127.0.0.1:1880/dashboard, type your pairing name, and shake your phone.",
+    "info": "# Shake Alarm\n\n**Already built for you (don't change):** pairing with your phone, the connection status,\nand the node that sends commands back to your phone.\n\n**You build** the part in the middle:\n\n1. A **function** \"shake level\" that turns ax, ay, az into one number.\n2. A **gauge** and a **chart** that show it.\n3. A **switch** that checks if it's above the threshold (flow.threshold).\n4. Two **change** nodes: set msg.payload to ALERT, or to OK.\n5. A **filter** node (block unless value changes).\n6. Wire the filter into \"send to my phone\".\n7. A **slider** wired into \"store threshold\".\n8. *Optional:* a **range** node set to \"Scale and limit to the target range\", 0–30 to 0–30,\n   in front of the gauge and chart. A hard knock can reach 90+ m/s², which would overshoot the gauge.\n\nThen open http://127.0.0.1:1880/dashboard, type your pairing name, and shake your phone.",
     "x": 170,
     "y": 40,
     "wires": []
@@ -673,9 +673,29 @@
     "y": 460,
     "wires": [
       [
-        "97b42862ef78a474",
-        "33406ee9a2e3763a",
+        "69a89c289f4e3197",
         "c0dddb274b5cb57f"
+      ]
+    ]
+  },
+  {
+    "id": "69a89c289f4e3197",
+    "type": "range",
+    "z": "98e3f94b01a2d59b",
+    "name": "limit to the display scale",
+    "minin": "0",
+    "maxin": "30",
+    "minout": "0",
+    "maxout": "30",
+    "action": "clamp",
+    "round": false,
+    "property": "payload",
+    "x": 560,
+    "y": 380,
+    "wires": [
+      [
+        "97b42862ef78a474",
+        "33406ee9a2e3763a"
       ]
     ]
   },

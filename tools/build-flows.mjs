@@ -294,6 +294,8 @@ and the node that sends commands back to your phone.
 5. A **filter** node (block unless value changes).
 6. Wire the filter into "send to my phone".
 7. A **slider** wired into "store threshold".
+8. *Optional:* a **range** node set to "Scale and limit to the target range", 0–${cfg.shakeScaleMax} to 0–${cfg.shakeScaleMax},
+   in front of the gauge and chart. A hard knock can reach 90+ m/s², which would overshoot the gauge.
 
 Then open http://127.0.0.1:1880/dashboard, type your pairing name, and shake your phone.`;
 
@@ -342,7 +344,14 @@ function studentFlow(withSolution) {
 
   if (withSolution) {
     nodes.push(
-      fn('s-shake', z, 'shake level', CODE.shake, 1, 340, 460, [[id('s-gauge'), id('s-chart'), id('s-switch')]]),
+      fn('s-shake', z, 'shake level', CODE.shake, 1, 340, 460, [[id('s-limit'), id('s-switch')]]),
+      // A hard flick or knock can reach 90+ m/s². The alarm uses the true value; the gauge and chart
+      // get it limited to their 0-30 scale, or the gauge shows e.g. 93 with the needle in the wrong place.
+      {
+        id: id('s-limit'), type: 'range', z, name: 'limit to the display scale', minin: '0', maxin: String(cfg.shakeScaleMax),
+        minout: '0', maxout: String(cfg.shakeScaleMax), action: 'clamp', round: false, property: 'payload',
+        x: 560, y: 380, wires: [[id('s-gauge'), id('s-chart')]],
+      },
       {
         id: id('s-gauge'), type: 'ui-gauge', z, name: '', group: id('s-g-motion'), order: 1, value: 'payload', valueType: 'msg',
         width: 3, height: 3, gtype: 'gauge-half', gstyle: 'needle', title: 'Shake level', alwaysShowTitle: false,
@@ -433,7 +442,7 @@ for (const [name, p] of Object.entries(phones)) {
     const online = age < 5;
     const level = p.max1s || p.s || 0;
     if (online) {
-        points.push({ topic: name, payload: level });
+        points.push({ topic: name, payload: Math.min(level, ${cfg.shakeScaleMax}) });   // keep the chart on its 0-${cfg.shakeScaleMax} scale
         if (typeof p.rtt === 'number') rtts.push(p.rtt);
         if (now - (p.lastShake || 0) < 1000) shaking++;
     }

@@ -479,6 +479,7 @@ Run on 2026-11-04 on the TA's Mac: local Mosquitto 2.1.2 with logins, Node-RED 5
 - **A phone that started while all was calm showed "Waiting" until the first shake,** because the filter node only sends changes. Fixed: the laptop's heartbeat carries its last decision.
 - **The earthquake rule fired from random overlapping shakes.** Fixed: a phone counts only if it shook in the last second, at least half the phones are needed, and the shaking must last a full second.
 - **Clicking Deploy left a paired laptop disconnected** (found in the first real-phone test, 2026-11-04). The laptop connects only after pairing, and a deploy drops the connection. Fixed: after every deploy the flow re-pairs with the same name automatically.
+- **A hard knock (93 m/s² measured) overshot the 0–30 gauge,** which showed "93.44" with the needle in the wrong place. Fixed: a range node ("scale and limit") feeds the gauge and chart; the alarm still uses the true value. It's an optional step for students too, and a good point about sensor outliers and display limits.
 - **Node.js's built-in time-zone data is older than macOS's.** This Mac reports BC time as MST (permanent UTC-7) while Node 25 still uses PST, so any clock time Node-RED formats is an hour off. Fixed: the flows don't show server-side clock times; dashboard charts use the browser's clock.
 
 **Not tested yet** (update: real phones, cloud broker, Pages and cloud round trips were tested in Phase 2; see the Phases table):
