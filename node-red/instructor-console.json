@@ -178,7 +178,7 @@
     "yAxisProperty": "payload",
     "yAxisPropertyType": "msg",
     "ymin": "0",
-    "ymax": "",
+    "ymax": "30",
     "bins": 10,
     "action": "append",
     "stackSeries": false,

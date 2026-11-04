@@ -347,15 +347,17 @@ function studentFlow(withSolution) {
         id: id('s-gauge'), type: 'ui-gauge', z, name: '', group: id('s-g-motion'), order: 1, value: 'payload', valueType: 'msg',
         width: 3, height: 3, gtype: 'gauge-half', gstyle: 'needle', title: 'Shake level', alwaysShowTitle: false,
         floatingTitlePosition: 'top-left', units: 'm/s²', icon: '', prefix: '', suffix: '',
-        segments: [{ from: '0', color: '#1f7a4d' }, { from: '6', color: '#e0a800' }, { from: '12', color: '#b3261e' }],
-        min: 0, max: 20, sizeThickness: 16, sizeGap: 4, sizeKeyThickness: 8, styleRounded: true, styleGlow: false,
+        // Real shakes measured on iPhone and Android reach 15-27 m/s², so the scale goes to 30.
+        // Green below the default threshold, amber above it, red for a strong shake (half the scale).
+        segments: [{ from: '0', color: '#1f7a4d' }, { from: String(cfg.defaultThreshold), color: '#e0a800' }, { from: String(cfg.shakeScaleMax / 2), color: '#b3261e' }],
+        min: 0, max: cfg.shakeScaleMax, sizeThickness: 16, sizeGap: 4, sizeKeyThickness: 8, styleRounded: true, styleGlow: false,
         className: '', x: 560, y: 420, wires: [[]],
       },
       {
         id: id('s-chart'), type: 'ui-chart', z, group: id('s-g-motion'), name: '', label: 'Shake level, last minute', order: 2,
         chartType: 'line', category: 'shake level', categoryType: 'str', xAxisLabel: '', xAxisProperty: '',
         xAxisPropertyType: 'timestamp', xAxisType: 'time', xAxisFormat: '', xAxisFormatType: 'auto', xmin: '', xmax: '',
-        yAxisLabel: 'm/s²', yAxisProperty: 'payload', yAxisPropertyType: 'msg', ymin: '0', ymax: '', bins: 10,
+        yAxisLabel: 'm/s²', yAxisProperty: 'payload', yAxisPropertyType: 'msg', ymin: '0', ymax: String(cfg.shakeScaleMax), bins: 10,
         action: 'append', stackSeries: false, pointShape: 'circle', pointRadius: 2, showLegend: false,
         removeOlder: 1, removeOlderUnit: '60', removeOlderPoints: '', colors: CHART_COLORS,
         textColor: ['#666666'], textColorDefault: true, gridColor: ['#e5e5e5'], gridColorDefault: true,
@@ -525,7 +527,7 @@ function consoleFlow() {
       id: id('c-chart'), type: 'ui-chart', z, group: id('c-g-fleet'), name: '', label: 'Shake level of every sharing phone', order: 1,
       chartType: 'line', category: 'topic', categoryType: 'msg', xAxisLabel: '', xAxisProperty: '',
       xAxisPropertyType: 'timestamp', xAxisType: 'time', xAxisFormat: '', xAxisFormatType: 'auto', xmin: '', xmax: '',
-      yAxisLabel: 'm/s²', yAxisProperty: 'payload', yAxisPropertyType: 'msg', ymin: '0', ymax: '', bins: 10,
+      yAxisLabel: 'm/s²', yAxisProperty: 'payload', yAxisPropertyType: 'msg', ymin: '0', ymax: String(cfg.shakeScaleMax), bins: 10,
       action: 'append', stackSeries: false, pointShape: 'circle', pointRadius: 2, showLegend: true,
       removeOlder: 1, removeOlderUnit: '60', removeOlderPoints: '', colors: CHART_COLORS,
       textColor: ['#666666'], textColorDefault: true, gridColor: ['#e5e5e5'], gridColorDefault: true,
@@ -585,6 +587,7 @@ export const CONFIG = {
   brokerUrl: ${JSON.stringify(url)},
   username: ${JSON.stringify(cfg.studentUser)},
   defaultThreshold: ${Number(cfg.defaultThreshold)},
+  shakeScaleMax: ${Number(cfg.shakeScaleMax)},
   autoPauseMinutes: ${Number(cfg.autoPauseMinutes)},
 };
 `;

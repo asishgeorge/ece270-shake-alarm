@@ -3,5 +3,6 @@ export const CONFIG = {
   brokerUrl: "wss://z912aa6d.ala.us-east-1.emqxsl.com:8084/mqtt",
   username: "student",
   defaultThreshold: 6,
+  shakeScaleMax: 30,
   autoPauseMinutes: 30,
 };

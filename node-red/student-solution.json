@@ -709,12 +709,12 @@
         "color": "#e0a800"
       },
       {
-        "from": "12",
+        "from": "15",
         "color": "#b3261e"
       }
     ],
     "min": 0,
-    "max": 20,
+    "max": 30,
     "sizeThickness": 16,
     "sizeGap": 4,
     "sizeKeyThickness": 8,
@@ -750,7 +750,7 @@
     "yAxisProperty": "payload",
     "yAxisPropertyType": "msg",
     "ymin": "0",
-    "ymax": "",
+    "ymax": "30",
     "bins": 10,
     "action": "append",
     "stackSeries": false,

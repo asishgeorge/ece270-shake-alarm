@@ -28,7 +28,7 @@ So the phone is the sensor and the actuator, the laptop is the controller, and t
 | Phase | What | Status |
 |---|---|---|
 | **1. End-to-end build** | Phone page, student starter + solution flows, Class Console, local broker, unit tests, browser end-to-end test, 30-student simulation | **Done and tested locally (2026-11-04)** |
-| **2. Real phones + cloud broker** | Cloud broker, GitHub Pages, test on one iPhone and one Android, tune the default threshold (6 m/s²) on real phones | **Broker done and tested (EMQX, 2026-11-04).** Repo is on GitHub; the first Pages deploys timed out on GitHub's side. Real phones next. |
+| **2. Real phones + cloud broker** | Cloud broker, GitHub Pages, test on one iPhone and one Android, tune the default threshold on real phones | **Done (2026-11-04).** EMQX broker checked. Page live at https://asishgeorge.github.io/ece270-shake-alarm/. Worked on iPhone and Android, over Wi-Fi and mobile data. Real shakes measured 15–27 m/s², so the threshold stays at 6 and the gauges now go to 30. One bug found and fixed: clicking Deploy left the laptop disconnected. |
 | **3. Professor sign-off** | Demo the end-to-end system | — |
 | **4. Lecture add-ons** | Acknowledge button and state machine (SA-5), labelled recording + CSV logger + Orange workflow (SA-6), latency histogram (SA-4) | After sign-off |
 | **5. Materials** | Setup handout (Windows/Mac), step-by-step student guide in the style of the existing demo decks, QR-code slide, worksheets (RTM, state chart, STRIDE), instructor run sheets | After sign-off |
@@ -481,7 +481,7 @@ Run on 2026-11-04 on the TA's Mac: local Mosquitto 2.1.2 with logins, Node-RED 5
 - **Clicking Deploy left a paired laptop disconnected** (found in the first real-phone test, 2026-11-04). The laptop connects only after pairing, and a deploy drops the connection. Fixed: after every deploy the flow re-pairs with the same name automatically.
 - **Node.js's built-in time-zone data is older than macOS's.** This Mac reports BC time as MST (permanent UTC-7) while Node 25 still uses PST, so any clock time Node-RED formats is an hour off. Fixed: the flows don't show server-side clock times; dashboard charts use the browser's clock.
 
-**Not tested yet (Phase 2):**
+**Not tested yet** (update: real phones, cloud broker, Pages and cloud round trips were tested in Phase 2; see the Phases table):
 - real phone sensors (iPhone permission prompt, Android);
 - ~~the cloud broker~~ (done: EMQX, see above);
 - GitHub Pages hosting;

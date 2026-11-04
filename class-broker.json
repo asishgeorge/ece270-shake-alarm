@@ -8,5 +8,6 @@
   "studentUser": "student",
   "instructorUser": "instructor",
   "defaultThreshold": 6,
-  "autoPauseMinutes": 30
+  "autoPauseMinutes": 30,
+  "shakeScaleMax": 30
 }

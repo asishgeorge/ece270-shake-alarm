@@ -142,6 +142,23 @@ try {
   r = await waitText(phone, '#status-word', /All calm/, 6000);
   check('returns to calm after the shake', r.ok, r.text);
 
+  // ---------------------------------------------------------------- clicking Deploy must not break pairing
+  // (Bug found in the first real-phone test: a deploy dropped the broker connection for good.)
+  const NR = new URL(STUDENT_DASH).origin;
+  const current = await (await fetch(NR + '/flows', { headers: { 'Node-RED-API-Version': 'v1' } })).json();
+  const res = await fetch(NR + '/flows', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Node-RED-Deployment-Type': 'full', 'Node-RED-API-Version': 'v1' },
+    body: JSON.stringify(current),
+  });
+  check('a full Deploy of the student flow is accepted', res.ok, `HTTP ${res.status}`);
+  await new Promise((done) => setTimeout(done, 4000));
+  await phone.bringToFront();
+  await phone.click('#tap-shake');
+  r = await waitText(phone, '#status-word', /Shake detected/, 10000);
+  check('after Deploy the laptop re-pairs by itself and still decides', r.ok, `${r.text}, ${r.ms} ms after tap`);
+  await waitText(phone, '#status-word', /All calm/, 6000);
+
   // ---------------------------------------------------------------- level 1: decide on the phone
   await phone.bringToFront();
   await phone.click('#advanced summary');

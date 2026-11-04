@@ -381,12 +381,13 @@ function ago(ms) {
 }
 
 function renderInfo(now) {
-  const pct = Math.min(100, (S.level / 20) * 100);
+  const scale = CONFIG.shakeScaleMax || 30;
+  const pct = Math.min(100, (S.level / scale) * 100);
   $('level-bar').style.width = pct + '%';
   $('level-value').textContent = S.level.toFixed(1) + ' m/s²';
   const mark = $('threshold-mark');
   mark.hidden = S.decider !== 'phone';
-  mark.style.left = Math.min(100, (S.threshold / 20) * 100) + '%';
+  mark.style.left = Math.min(100, (S.threshold / scale) * 100) + '%';
 
   $('info-laptop').textContent = !S.laptopSeenAt ? 'Not seen yet'
     : now - S.laptopSeenAt < LAPTOP_TIMEOUT_MS ? 'Connected' : `Not seen for ${Math.round((now - S.laptopSeenAt) / 1000)} s`;
