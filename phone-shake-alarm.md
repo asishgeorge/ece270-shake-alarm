@@ -29,7 +29,7 @@ So the phone is the sensor and the actuator, the laptop is the controller, and t
 |---|---|---|
 | **1. End-to-end build** | Phone page, student starter + solution flows, Class Console, local broker, unit tests, browser end-to-end test, 30-student simulation | **Done and tested locally (2026-11-04)** |
 | **2. Real phones + cloud broker** | Cloud broker, GitHub Pages, test on one iPhone and one Android, tune the default threshold on real phones | **Done (2026-11-04).** EMQX broker checked. Page live at https://asishgeorge.github.io/ece270-shake-alarm/. Worked on iPhone and Android, over Wi-Fi and mobile data. Real shakes measured 15–27 m/s², so the threshold stays at 6 and the gauges now go to 30. One bug found and fixed: clicking Deploy left the laptop disconnected. |
-| **3. Professor sign-off** | Demo the end-to-end system | — |
+| **3. Professor sign-off** | Demo the end-to-end system | **Demo setup ready (2026-11-04):** a permanent Node-RED on the TA's Mac (Node 26 LTS, localhost only) with the student solution and the Class Console. The README has a 10-minute run-through. |
 | **4. Lecture add-ons** | Acknowledge button and state machine (SA-5), labelled recording + CSV logger + Orange workflow (SA-6), latency histogram (SA-4) | After sign-off |
 | **5. Materials** | Setup handout (Windows/Mac), step-by-step student guide in the style of the existing demo decks, QR-code slide, worksheets (RTM, state chart, STRIDE), instructor run sheets | After sign-off |
 
@@ -525,6 +525,7 @@ Run on 2026-11-04 on the TA's Mac: local Mosquitto 2.1.2 with logins, Node-RED 5
 | Lecture-room Wi-Fi blocks port 8883 | Phones use mobile data. Node-RED can connect through the WebSocket port 8884 instead (`wss://<host>:8884/mqtt`). |
 | Phone locks or the student switches apps | The page keeps the screen awake but browsers pause background tabs. Keep the page in the foreground. |
 | Two students pick the same pairing name | Both phones show a warning; one picks a new name |
+| Students' Node-RED is reachable from the campus Wi-Fi (Node-RED's default), so anyone nearby could open the editor and run code on their laptop | The setup handout (Phase 5) tells students to set `uiHost: "127.0.0.1"` in settings.js, as the demo setup does. It's also a good SA-8 talking point: an exposed admin page is how Mirai-style attacks start. |
 | Someone misuses the class password (spoofing pairs, flooding, using up the 1 GB) | Change the password; check usage in the EMQX console. Console topics are already protected by deny rules. |
 | Free plan limits change | Check each term. A paid plan or a self-hosted broker are the alternatives. |
 | Privacy concerns | No student IDs, motion data only, never location, private by default, sharing is opt-in and sends only the shake level, and nothing is retained on the broker |

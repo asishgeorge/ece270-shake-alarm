@@ -8,7 +8,8 @@
     "test": "node --test logic.test.mjs",
     "broker-check": "node --env-file-if-exists=../.env.local broker-check.mjs",
     "e2e": "node --env-file-if-exists=../.env.local e2e.mjs",
-    "sim": "node --env-file-if-exists=../.env.local sim.mjs"
+    "sim": "node --env-file-if-exists=../.env.local sim.mjs",
+    "deploy-demo": "node --env-file-if-exists=../.env.local deploy-demo.mjs"
   },
   "dependencies": {
     "mqtt": "5.16.1"

@@ -10,6 +10,7 @@ The teaching plan, activities, slide mapping and test results are in [phone-shak
 - **Class broker:** EMQX Cloud Serverless (free tier), set up and checked with `npm run broker-check`.
 - **Phone page:** live at **https://asishgeorge.github.io/ece270-shake-alarm/**.
 - **Real phones:** tested on iPhone and Android, over Wi-Fi and mobile data. Real shakes measured 15–27 m/s², so the default threshold of 6 works and the gauges go to 30.
+- **Demo setup:** a permanent Node-RED on the TA's Mac with both dashboards (see "The demo setup" below).
 - **Next:** professor sign-off, then the lecture add-ons and materials (see the plan).
 
 ## Use it
@@ -23,6 +24,8 @@ Open **https://asishgeorge.github.io/ece270-shake-alarm/** in Safari or Chrome, 
 Keep the page in front, because phones pause background pages. "Class options" holds "Share my shake level with the class console" and "Who decides the alarm?".
 
 ### Node-RED on a laptop (see, run and edit the flows)
+
+The manual way, as students will do it. On a laptop with nvm, `local/setup-node-red.sh` does steps 1–5 in one go; see the demo setup below.
 
 One-time setup:
 1. **Install Node.js** (LTS, version 22.9 or newer) from nodejs.org.
@@ -50,6 +53,53 @@ Open the dashboards:
 - Double-click any node to change it, then Deploy. That's how students build the activity.
 - Changes made in the editor stay in that copy of Node-RED only. The files in `node-red/` are **generated** by `tools/build-flows.mjs`, so to change what students get, either ask for the change to be made in the generator, or use Menu → **Export** → Download and have it folded into the generator.
 
+### The demo setup on the TA's Mac (permanent)
+
+Set up on 2026-11-04 with two scripts. They work on any Mac or Linux laptop that has nvm, so they can be repeated on the professor's or the next TA's laptop.
+
+| What | Where |
+|---|---|
+| Node.js 26 LTS | through nvm. The laptop's default Node is **not** changed; Node-RED alone uses 26. |
+| Node-RED 5.0.9 + Dashboard 2.0 1.35.0 | the versions everything was tested with |
+| Node-RED's data | `~/.node-red`: flows, settings, the dashboard, and the passwords, encrypted, readable only by you |
+| Who can open it | **only this computer** (`127.0.0.1`). By default Node-RED would accept anyone on the same Wi-Fi, who could then run code on the laptop. |
+| What's loaded | the student solution **and** the Class Console, with both passwords filled in |
+
+```sh
+local/setup-node-red.sh          # one time: Node 26, Node-RED, dashboard, localhost-only
+local/node-red.sh start          # after every restart of the Mac (also: stop, restart, status, log)
+cd tools && npm run deploy-demo  # (re)load both flows with the passwords from .env.local
+```
+
+- **Editor:** http://127.0.0.1:1880
+- **Student dashboard:** http://127.0.0.1:1880/dashboard/shake
+- **Class Console:** http://127.0.0.1:1880/dashboard/console
+
+**When to re-run what:**
+- **After changing the flows in the repo,** or after changing a password in `.env.local`: run `npm run deploy-demo`. Any other flows you've added to Node-RED are kept.
+- **For a clean slate before a demo:** run `local/node-red.sh restart`. That clears pairings, gauges and the console table.
+
+**Checked:** the 18-check browser test ran on exactly this path (live phone page → EMQX → this Node-RED, both dashboards): 18/18 passed.
+
+### Demo run-through for the professor (about 10 minutes)
+
+1. **Start Node-RED.** Run `local/node-red.sh restart`. Open the student dashboard and the Class Console in two browser tabs.
+2. **Phone.** Open https://asishgeorge.github.io/ece270-shake-alarm/, note its pairing name, type the student password, tap **Start**, and allow motion.
+3. **Pair.** Type the same pairing name into the student dashboard and press Enter. Within 5 s:
+   - the phone shows **Laptop: Connected** and "All calm";
+   - the dashboard shows "Receiving readings".
+4. **The feedback loop.** Shake: the gauge and chart jump, and the phone says **"Shake detected!"** with the round trip in ms. Move the threshold slider to show false alarms against missed shakes.
+5. **Edge vs cloud.** On the phone: Class options → Who decides → **This phone**. It reacts without the network, even in airplane mode. That's Level 1 against Level 3.
+6. **The class view.** Tick **Share my shake level with the class console**, and the phone appears on the console. Then:
+   - Choose **Class console** as the decider.
+   - Type a message on the console and it appears on the phone.
+   - With 2 or more phones sharing, shake them together for the **earthquake alert**.
+7. **Privacy and security talking points:**
+   - The console only sees phones that opt in, and never their raw data.
+   - Students can't post console messages: the broker denies it.
+   - There are no student IDs.
+8. **Where it lives:** the editor at http://127.0.0.1:1880 shows the flows students build. Students get `node-red/student-starter.json`, which has only the plumbing.
+
 ### Class console in a lecture
 1. Run `instructor-console.json` (instructor password) and put http://127.0.0.1:1880/dashboard/console on the projector.
 2. Students tick **Share** on their phones.
@@ -74,16 +124,22 @@ node-red/                GENERATED flows to import into Node-RED
 tools/
   build-flows.mjs        generates phone/config.js and node-red/*.json from class-broker.json
   broker-check.mjs       checks the class broker: logins, both ports, the deny rules
+  deploy-demo.mjs        loads the student solution + Class Console into the running Node-RED, with passwords
   logic.test.mjs         unit tests for phone/logic.js
   e2e.mjs                browser end-to-end test (headless Chrome)
   sim.mjs                30-student load simulation
-local/start-broker.sh    local Mosquitto that requires logins, like the class broker
+local/start-broker.sh    local Mosquitto that requires logins, like the class broker (for tests)
+local/setup-node-red.sh  one-time install of a permanent Node-RED (Node 26 LTS via nvm, localhost only)
+local/node-red.sh        start / stop / restart / status / log for that Node-RED
 .github/workflows/pages.yml  publishes phone/ to GitHub Pages
 ```
 
 Don't edit generated files. Edit `class-broker.json` or `tools/build-flows.mjs`, then run `npm run build-flows` in `tools/`.
 
 ## Run it locally (no cloud, no phone)
+
+> This setup uses ports 1880 and 1881 for two test copies of Node-RED. Stop the demo Node-RED first (`local/node-red.sh stop`), then start it again afterwards. To run the browser test against the demo Node-RED instead, use:
+> `E2E_TARGET=class PHONE_URL='https://asishgeorge.github.io/ece270-shake-alarm/?sim=1' CONSOLE_DASH=http://127.0.0.1:1880/dashboard/console npm run e2e`
 
 You need:
 - Node.js 22.9 or newer (Node-RED 5 requires it)
