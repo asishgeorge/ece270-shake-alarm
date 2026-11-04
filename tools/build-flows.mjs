@@ -175,6 +175,7 @@ if (!${PAIR_RE}.test(name)) {
 }
 flow.set('pair', name);
 flow.set('pairedAt', Date.now());
+flow.set('broker', 'connecting');
 flow.set('lastReading', 0);
 flow.set('phoneState', null);
 flow.set('lastCmd', null);
@@ -229,6 +230,13 @@ if (last && age < 3) return [{ payload: 'Receiving readings (' + count + ' per s
 if (flow.get('phoneState') === 'offline') return [{ payload: 'Your phone went offline' }, null];
 if (last) return [{ payload: 'No readings for ' + Math.round(age) + ' s' }, null];
 return [{ payload: 'Waiting for a phone using "' + pair + '"' }, null];`,
+
+  restore: `// Clicking Deploy restarts the MQTT connection, and this laptop only connects once paired.
+// So if it was paired before the deploy, pair again automatically with the same name.
+const pair = flow.get('pair');
+flow.set('broker', '');
+if (!pair || !flow.get('online')) return null;
+return { payload: pair };`,
 
   brokerStatus: `// Remembers whether the "my phone" MQTT node is connected, for the status text.
 const text = String((msg.status && msg.status.text) || '');
@@ -299,6 +307,8 @@ function studentFlow(withSolution) {
     comment('s-c-pair', z, 'Pairing and connection (pre-built)', '', 180, 100),
     uiTextInput('s-pair-in', z, 's-g-pair', 1, 'Pairing name (same as on your phone)', 'pair', 170, 140, [[id('s-pair')]]),
     fn('s-pair', z, 'pair with my phone', CODE.pair, 2, 420, 140, [[id('s-mqtt-in')], [id('s-pair-info')]]),
+    inject('s-restore-tick', z, 'after every deploy', { once: true, onceDelay: '1' }, 150, 60, [[id('s-restore')]]),
+    fn('s-restore', z, 're-pair after deploy', CODE.restore, 1, 400, 60, [[id('s-pair')]]),
     mqttIn('s-mqtt-in', z, 'my phone', B, '', 640, 120, [[id('s-router')]]),
     uiText('s-pair-info', z, 's-g-pair', 2, 'Pairing', 650, 180),
     inject('s-tick', z, 'every second', { repeat: '1', once: true }, 160, 240, [[id('s-conn')]]),
