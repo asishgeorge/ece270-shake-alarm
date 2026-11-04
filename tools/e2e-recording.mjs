@@ -161,8 +161,8 @@ function plots(page) {
       n: t.x?.length ?? 0,
       x: t.type === 'scatter3d' && t.x ? Array.from(t.x, Number).join(',') : '',
     })) : null);
-    return { ts: describe(gdIn('.rec-timeseries')), d3: describe(gdIn('.rec-3d')) };
-  }).catch(() => ({ ts: null, d3: null }));
+    return { ts: describe(gdIn('.rec-timeseries')), gy: describe(gdIn('.rec-gyro')), d3: describe(gdIn('.rec-3d')) };
+  }).catch(() => ({ ts: null, gy: null, d3: null }));
 }
 
 async function shot(page, file, fullPage = false) {
@@ -405,6 +405,11 @@ try {
   check('.rec-timeseries has a Plotly plot with 4 traces: ax, ay, az, shake',
     ts.length === 4 && ['ax', 'ay', 'az', 'shake'].every((nm) => names.some((n) => n.includes(nm))) && ts.every((t) => t.n > 0),
     p.ts ? ts.map((t) => `${t.name || t.type}:${t.n}`).join(', ') : 'no Plotly plot');
+  const gyro = p.gy || [];
+  const gnames = gyro.map((t) => t.name.toLowerCase());
+  check('.rec-gyro has a Plotly plot with 3 traces: gx, gy, gz (all N points)',
+    gyro.length === 3 && ['gx', 'gy', 'gz'].every((nm) => gnames.some((n) => n.startsWith(nm))) && gyro.every((t) => t.n === N),
+    p.gy ? gyro.map((t) => `${t.name || t.type}:${t.n}`).join(', ') : 'no Plotly plot');
   const d3 = p.d3 || [];
   const scatters = d3.filter((t) => t.type === 'scatter3d');
   check('.rec-3d has ≥ 2 scatter3d traces (one with all N points) and a mesh3d/surface sphere',

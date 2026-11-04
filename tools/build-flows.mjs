@@ -423,7 +423,10 @@ const RECORDING_PANEL = `<template>
       </div>
       <div class="rec-plot-msg" v-if="plotMsg">{{ plotMsg }}</div>
       <div class="rec-timeseries"></div>
-      <div class="rec-caption">Shaded: the window you chose. Move the slider to slide it along the recording.</div>
+      <div class="rec-gyro"></div>
+      <div class="rec-caption">Top: acceleration (m/s²). Bottom: how fast the phone turns (gyroscope, degrees per second):
+        gx is a flat spin (about the screen's axis), gy tilts it forward or back, gz tilts it left or right.
+        Shaded: the window you chose. Move the slider to slide it along the recording.</div>
       <div class="rec-3d-row">
         <div class="rec-3d"></div>
         <div class="rec-caption">Each dot is one reading of (ax, ay, az). Held still, the phone feels only gravity, so its
@@ -493,12 +496,13 @@ export default {
             if (p && p.state === 'ready' && Array.isArray(p.rows)) {
                 const n = p.rows.length;
                 const d = { rows: new Array(n), t: new Array(n), ax: new Array(n), ay: new Array(n),
-                    az: new Array(n), shake: new Array(n), maxAbs: 0 };
+                    az: new Array(n), shake: new Array(n), gx: new Array(n), gy: new Array(n), gz: new Array(n), maxAbs: 0 };
                 for (let k = 0; k < n; k++) {
                     const r = p.rows[k];
                     const row = [r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]];
                     d.rows[k] = row;
                     d.t[k] = row[0]; d.ax[k] = row[1]; d.ay[k] = row[2]; d.az[k] = row[3]; d.shake[k] = row[7];
+                    d.gx[k] = row[4]; d.gy[k] = row[5]; d.gz[k] = row[6];
                     d.maxAbs = Math.max(d.maxAbs, Math.abs(row[1]), Math.abs(row[2]), Math.abs(row[3]));
                 }
                 this.clearPlots();
@@ -567,8 +571,8 @@ export default {
         },
         draw() {
             const P = window.Plotly, d = this.recData;
-            const ts = this.el('.rec-timeseries'), sc = this.el('.rec-3d');
-            if (!P || !d || this.state !== 'ready' || this.gone || !ts || !sc) return;
+            const ts = this.el('.rec-timeseries'), gy = this.el('.rec-gyro'), sc = this.el('.rec-3d');
+            if (!P || !d || this.state !== 'ready' || this.gone || !ts || !gy || !sc) return;
             const family = this.$el && this.$el.nodeType === 1 ? getComputedStyle(this.$el).fontFamily : '';
             const font = { family: family || 'sans-serif', size: 12, color: '#1d2433' };
             const series = [
@@ -587,6 +591,24 @@ export default {
                 paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
                 xaxis: { title: { text: 'time (s)' }, range: [0, Math.max(this.span, 0.1)], zeroline: false, gridcolor: '#e5e5e5' },
                 yaxis: { title: { text: 'm/s²' }, gridcolor: '#e5e5e5', zerolinecolor: '#c9ced8' },
+                legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' },
+                hovermode: 'x unified', shapes: [this.windowShape()], uirevision: this.recKey
+            }, config);
+
+            // Rotation (gyroscope), same time axis and window as the acceleration plot.
+            const turns = [
+                { name: 'gx (flat spin)', y: d.gx, color: '#7b3fb3' },
+                { name: 'gy (tilt forward/back)', y: d.gy, color: '#00838f' },
+                { name: 'gz (tilt left/right)', y: d.gz, color: '#c2185b' }
+            ].map(function (s) {
+                return { type: 'scatter', mode: 'lines', name: s.name, x: d.t, y: s.y,
+                    line: { color: s.color, width: 1.5 }, hovertemplate: '%{y:.1f} °/s' };
+            });
+            P.newPlot(gy, turns, {
+                height: 220, margin: { l: 50, r: 10, t: 36, b: 40 }, font: font,
+                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+                xaxis: { title: { text: 'time (s)' }, range: [0, Math.max(this.span, 0.1)], zeroline: false, gridcolor: '#e5e5e5' },
+                yaxis: { title: { text: '°/s' }, gridcolor: '#e5e5e5', zerolinecolor: '#c9ced8' },
                 legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' },
                 hovermode: 'x unified', shapes: [this.windowShape()], uirevision: this.recKey
             }, config);
@@ -626,6 +648,7 @@ export default {
             const w = this.windowRange();
             const pts = this.windowPoints();
             P.relayout(this.el('.rec-timeseries'), { 'shapes[0].x0': w[0], 'shapes[0].x1': w[1] });
+            P.relayout(this.el('.rec-gyro'), { 'shapes[0].x0': w[0], 'shapes[0].x1': w[1] });
             P.restyle(this.el('.rec-3d'), {
                 x: [pts.x], y: [pts.y], z: [pts.z], text: [pts.text],
                 'marker.color': [pts.t], 'marker.cmin': w[0], 'marker.cmax': w[1],
@@ -635,8 +658,9 @@ export default {
         clearPlots() {
             const P = window.Plotly;
             if (P && this.drawn) {
-                const ts = this.el('.rec-timeseries'), sc = this.el('.rec-3d');
+                const ts = this.el('.rec-timeseries'), gy = this.el('.rec-gyro'), sc = this.el('.rec-3d');
                 if (ts) P.purge(ts);
+                if (gy) P.purge(gy);
                 if (sc) P.purge(sc);
             }
             this.drawn = false;
@@ -725,6 +749,7 @@ export default {
 .shake-recording .rec-download:hover { background: #0a4c8f; }
 .shake-recording .rec-plot-msg { font-size: 14px; color: #5b6475; }
 .shake-recording .rec-timeseries { width: 100%; min-height: 260px; }
+.shake-recording .rec-gyro { width: 100%; min-height: 220px; }
 .shake-recording .rec-3d-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
 .shake-recording .rec-3d { flex: 0 1 640px; min-width: 320px; min-height: 420px; }
 .shake-recording .rec-3d-row .rec-caption { flex: 1 1 240px; max-width: 520px; }

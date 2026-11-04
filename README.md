@@ -84,6 +84,9 @@ local/node-red.sh restart    # clean slate before a demo: clears pairings, gauge
 On the phone, tap **Record 20 s**. After a 3-second countdown the phone sends **every** sensor reading for 20 seconds, about 50 per second. A new **Recording** panel on the student dashboard (`/dashboard/shake`) then shows:
 
 - **Time series:** ax, ay, az and the shake level over the recording.
+- **Rotation:** gx, gy and gz from the gyroscope, in degrees per second, on the same time axis.
+  - gx is a flat spin, gy tilts the phone forward or back, gz tilts it left or right.
+  - Drawing in the air shows up far more clearly here than in acceleration, because a wrist mostly *turns* while drawing.
 - **3D view:** every reading as a dot (ax, ay, az), inside a see-through "gravity sphere" of radius 9.81 m/s². Drag it to turn it.
   - A phone held still sits on the sphere.
   - Turning the phone moves the dots around the sphere.
@@ -207,7 +210,7 @@ Run these in `tools/` after `npm install`. Tests against the class broker read `
 | `npm test` | Unit tests for the phone logic |
 | `npm run broker-check` | The class broker: logins, ports, deny rules |
 | `E2E_TARGET=class PHONE_URL='https://asishgeorge.github.io/ece270-shake-alarm/?sim=1' CONSOLE_DASH=http://127.0.0.1:1880/dashboard/console npm run e2e` | 18 checks in headless Chrome, on the real path: live phone page → EMQX → the demo Node-RED. Needs the demo setup running. |
-| `E2E_TARGET=class PHONE_URL='https://asishgeorge.github.io/ece270-shake-alarm/?sim=1&recsec=6' STUDENT_DASH=http://127.0.0.1:1880/dashboard/shake npm run e2e-recording` | 31 checks for Recording on the real path. Covers the countdown, every batch arriving, no extra messages (at most 5.5/s), the alarm still working, the dashboard count matching the phone, both plots, the slider, and the CSV matching the data sent. |
+| `E2E_TARGET=class PHONE_URL='https://asishgeorge.github.io/ece270-shake-alarm/?sim=1&recsec=6' STUDENT_DASH=http://127.0.0.1:1880/dashboard/shake npm run e2e-recording` | 32 checks for Recording on the real path. Covers the countdown, every batch arriving, no extra messages (at most 5.5/s), the alarm still working, the dashboard count matching the phone, all three plots, the slider, and the CSV matching the data sent. |
 | `npm run sim -- --class --phones 30 --seconds 60 --share` | 30 simulated phones + 30 laptops + the real console against EMQX. It uses some of the free quota, so keep it short. |
 
 **Offline tests with no cloud:** `local/start-broker.sh` runs a local Mosquitto with test logins (`student`/`dev-student`, `instructor`/`dev-instructor`). Then:
