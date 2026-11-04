@@ -1,0 +1,932 @@
+[
+  {
+    "id": "d8033978f947c8e9",
+    "type": "tab",
+    "label": "Class Console",
+    "disabled": false,
+    "info": "# Class Console\n\nShows only phones whose owner turned on **Share my shake level with the class console**.\nRaw sensor data never comes here: just pairing name, shake level, round-trip time and who decides.\n\n- **Earthquake detector:** if at least half the sharing phones (adjustable) keep shaking together for 1 s, every sharing phone gets an alert message.\n- **Class console as decision maker:** phones that pick \"Class console\" get ALERT/OK from here.\n- **Message to phones:** shows a text banner on every sharing phone.\n\nDashboard: http://127.0.0.1:1880/dashboard/console"
+  },
+  {
+    "id": "d1619cb6fa71e06a",
+    "type": "comment",
+    "z": "d8033978f947c8e9",
+    "name": "READ ME: Class Console (double-click)",
+    "info": "# Class Console\n\nShows only phones whose owner turned on **Share my shake level with the class console**.\nRaw sensor data never comes here: just pairing name, shake level, round-trip time and who decides.\n\n- **Earthquake detector:** if at least half the sharing phones (adjustable) keep shaking together for 1 s, every sharing phone gets an alert message.\n- **Class console as decision maker:** phones that pick \"Class console\" get ALERT/OK from here.\n- **Message to phones:** shows a text banner on every sharing phone.\n\nDashboard: http://127.0.0.1:1880/dashboard/console",
+    "x": 170,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "6a75dd900bec9572",
+    "type": "mqtt in",
+    "z": "d8033978f947c8e9",
+    "name": "shared phones",
+    "topic": "ece270/class/phones/+",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "4df57093ba977687",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 150,
+    "y": 120,
+    "wires": [
+      [
+        "cbbcc69fcbddea60"
+      ]
+    ]
+  },
+  {
+    "id": "cbbcc69fcbddea60",
+    "type": "function",
+    "z": "d8033978f947c8e9",
+    "name": "track phones + class decisions",
+    "func": "// One message per shared phone, 5 per second: { s: shake level, t, rtt, by }\nconst name = msg.topic.split('/')[3];\nconst d = msg.payload || {};\nconst phones = flow.get('phones') || {};\nconst p = phones[name] || {};\nconst now = Date.now();\np.s = Number(d.s) || 0;\np.rtt = typeof d.rtt === 'number' ? d.rtt : p.rtt;\np.by = d.by || '?';\np.last = now;\np.max1s = Math.max(p.max1s || 0, p.s);\nconst threshold = flow.get('classThreshold') ?? 6;\nif (p.s > threshold) p.lastShake = now;\nphones[name] = p;\nflow.set('phones', phones);\n\n// When a phone chooses \"Class console\" as its decision maker, decide here (Level 3 / 6).\nif (p.by !== 'class') { p.lastCmd = null; return null; }\nconst cmd = p.s > threshold ? 'ALERT' : 'OK';\nif (cmd === p.lastCmd) return null;\np.lastCmd = cmd;\nreturn { topic: 'ece270/class/cmd/' + name, payload: JSON.stringify({ cmd: cmd, t: typeof d.t === 'number' ? d.t : null }) };",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 400,
+    "y": 120,
+    "wires": [
+      [
+        "fa5f669a00528237"
+      ]
+    ]
+  },
+  {
+    "id": "fa5f669a00528237",
+    "type": "mqtt out",
+    "z": "d8033978f947c8e9",
+    "name": "to phones",
+    "topic": "",
+    "qos": "1",
+    "retain": "false",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "4df57093ba977687",
+    "x": 1050,
+    "y": 260,
+    "wires": []
+  },
+  {
+    "id": "bab5bf275bc6f136",
+    "type": "inject",
+    "z": "d8033978f947c8e9",
+    "name": "every second",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "1",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "0.5",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 150,
+    "y": 200,
+    "wires": [
+      [
+        "320777be5ea54baa"
+      ]
+    ]
+  },
+  {
+    "id": "320777be5ea54baa",
+    "type": "function",
+    "z": "d8033978f947c8e9",
+    "name": "table, chart, summary",
+    "func": "const phones = flow.get('phones') || {};\nconst now = Date.now();\nconst rows = [];\nconst points = [];\nconst rtts = [];\nlet shaking = 0;\nfor (const [name, p] of Object.entries(phones)) {\n    const age = (now - p.last) / 1000;\n    if (age > 120) { delete phones[name]; continue; }\n    const online = age < 5;\n    const level = p.max1s || p.s || 0;\n    if (online) {\n        points.push({ topic: name, payload: level });\n        if (typeof p.rtt === 'number') rtts.push(p.rtt);\n        if (now - (p.lastShake || 0) < 1000) shaking++;\n    }\n    rows.push({\n        'Pairing name': name,\n        'Shake (m/s²)': online ? level.toFixed(1) : '-',\n        'Round trip (ms)': typeof p.rtt === 'number' ? p.rtt : '-',\n        'Decided by': p.by,\n        'Last seen': online ? 'now' : Math.round(age) + ' s ago'\n    });\n    p.max1s = 0;\n}\nflow.set('phones', phones);\nrows.sort((a, b) => a['Pairing name'].localeCompare(b['Pairing name']));\nrtts.sort((a, b) => a - b);\nconst pct = (q) => rtts.length ? rtts[Math.min(rtts.length - 1, Math.floor(rtts.length * q))] : '-';\nconst summary = points.length + ' phone' + (points.length === 1 ? '' : 's') + ' sharing · ' + shaking +\n    ' shaking now · round trip median ' + pct(0.5) + ' ms, 90th percentile ' + pct(0.9) + ' ms';\nreturn [{ payload: rows }, points, { payload: summary }];",
+    "outputs": 3,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 400,
+    "y": 200,
+    "wires": [
+      [
+        "a5914c58d212bb79"
+      ],
+      [
+        "ba2bdde7d0b44b65"
+      ],
+      [
+        "ef67af88d92fd8a1"
+      ]
+    ]
+  },
+  {
+    "id": "a5914c58d212bb79",
+    "type": "ui-table",
+    "z": "d8033978f947c8e9",
+    "group": "14fcec804e4cf676",
+    "name": "",
+    "label": "",
+    "order": 1,
+    "width": 0,
+    "height": 0,
+    "maxrows": 0,
+    "passthru": false,
+    "autocols": true,
+    "showSearch": false,
+    "deselect": true,
+    "selectionType": "none",
+    "columns": [],
+    "mobileBreakpoint": "sm",
+    "mobileBreakpointType": "defaults",
+    "action": "replace",
+    "className": "",
+    "x": 650,
+    "y": 160,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ba2bdde7d0b44b65",
+    "type": "ui-chart",
+    "z": "d8033978f947c8e9",
+    "group": "bbd7b0ff04e2c4ed",
+    "name": "",
+    "label": "Shake level of every sharing phone",
+    "order": 1,
+    "chartType": "line",
+    "category": "topic",
+    "categoryType": "msg",
+    "xAxisLabel": "",
+    "xAxisProperty": "",
+    "xAxisPropertyType": "timestamp",
+    "xAxisType": "time",
+    "xAxisFormat": "",
+    "xAxisFormatType": "auto",
+    "xmin": "",
+    "xmax": "",
+    "yAxisLabel": "m/s²",
+    "yAxisProperty": "payload",
+    "yAxisPropertyType": "msg",
+    "ymin": "0",
+    "ymax": "",
+    "bins": 10,
+    "action": "append",
+    "stackSeries": false,
+    "pointShape": "circle",
+    "pointRadius": 2,
+    "showLegend": true,
+    "removeOlder": 1,
+    "removeOlderUnit": "60",
+    "removeOlderPoints": "",
+    "colors": [
+      "#0d5fb3",
+      "#b3261e",
+      "#1f7a4d",
+      "#e0a800",
+      "#7b3fb3",
+      "#00838f",
+      "#c2185b",
+      "#5d4037",
+      "#455a64"
+    ],
+    "textColor": [
+      "#666666"
+    ],
+    "textColorDefault": true,
+    "gridColor": [
+      "#e5e5e5"
+    ],
+    "gridColorDefault": true,
+    "width": 12,
+    "height": 5,
+    "className": "",
+    "interpolation": "linear",
+    "x": 660,
+    "y": 200,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ef67af88d92fd8a1",
+    "type": "ui-text",
+    "z": "d8033978f947c8e9",
+    "group": "d5e7c1a91207bdda",
+    "order": 1,
+    "width": 0,
+    "height": 0,
+    "name": "",
+    "label": "Now",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "style": false,
+    "font": "",
+    "fontSize": 16,
+    "color": "#1d2433",
+    "wrapText": true,
+    "className": "",
+    "value": "payload",
+    "valueType": "msg",
+    "x": 640,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "76cf860676b395bf",
+    "type": "inject",
+    "z": "d8033978f947c8e9",
+    "name": "every 250 ms",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "0.25",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "0.5",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 160,
+    "y": 300,
+    "wires": [
+      [
+        "531d77a9c5bda539"
+      ]
+    ]
+  },
+  {
+    "id": "531d77a9c5bda539",
+    "type": "function",
+    "z": "d8033978f947c8e9",
+    "name": "earthquake detector",
+    "func": "// Class earthquake detector: many phones shaking at the same moment.\nif (!flow.get('quakeOn')) return null;\nconst phones = Object.values(flow.get('phones') || {});\nconst now = Date.now();\nconst active = phones.filter(p => now - p.last < 5000);\n// A phone counts as shaking if it was above the threshold in the last second.\nconst shaking = active.filter(p => now - (p.lastShake || 0) < 1000).length;\nconst need = Math.max(flow.get('quakeMin') ?? 2, Math.ceil(active.length * (flow.get('quakePct') ?? 50) / 100));\n// Students shake their own phones all the time, so random overlaps must not count:\n// enough phones must keep shaking together for a full second.\nif (!active.length || shaking < need) { flow.set('quakeSince', 0); return null; }\nif (!flow.get('quakeSince')) flow.set('quakeSince', now);\nif (now - flow.get('quakeSince') < 1000) return null;\nif (now - (flow.get('lastQuake') || 0) < 15000) return null;   // at most one alert per 15 s\nflow.set('lastQuake', now);\nflow.set('quakeCount', (flow.get('quakeCount') || 0) + 1);\nconst text = 'Earthquake! ' + shaking + ' of ' + active.length + ' phones shook at the same time.';\nreturn [\n    { topic: 'ece270/class/broadcast', payload: JSON.stringify({ level: 'alert', text: text, t: now }) },\n    { payload: 'Earthquake #' + flow.get('quakeCount') + ': ' + shaking + ' of ' + active.length + ' phones' }\n];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 400,
+    "y": 300,
+    "wires": [
+      [
+        "fa5f669a00528237"
+      ],
+      [
+        "4fdbc7eb54ee1973",
+        "cdbaa8860e1ac1ed"
+      ]
+    ]
+  },
+  {
+    "id": "4fdbc7eb54ee1973",
+    "type": "ui-text",
+    "z": "d8033978f947c8e9",
+    "group": "d5e7c1a91207bdda",
+    "order": 2,
+    "width": 0,
+    "height": 0,
+    "name": "",
+    "label": "Last earthquake",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "style": false,
+    "font": "",
+    "fontSize": 16,
+    "color": "#1d2433",
+    "wrapText": true,
+    "className": "",
+    "value": "payload",
+    "valueType": "msg",
+    "x": 660,
+    "y": 320,
+    "wires": []
+  },
+  {
+    "id": "cdbaa8860e1ac1ed",
+    "type": "ui-notification",
+    "z": "d8033978f947c8e9",
+    "ui": "2d28940ce9b6a583",
+    "position": "top right",
+    "colorDefault": true,
+    "color": null,
+    "displayTime": "5",
+    "showCountdown": true,
+    "outputs": 1,
+    "allowDismiss": true,
+    "dismissText": "Close",
+    "allowConfirm": false,
+    "confirmText": "Confirm",
+    "raw": false,
+    "className": "",
+    "name": "earthquake popup",
+    "x": 670,
+    "y": 360,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "0197e0e0e968c0ed",
+    "type": "inject",
+    "z": "d8033978f947c8e9",
+    "name": "defaults at start",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "0.5",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 170,
+    "y": 440,
+    "wires": [
+      [
+        "f5e5a8cc300874f5"
+      ]
+    ]
+  },
+  {
+    "id": "f5e5a8cc300874f5",
+    "type": "function",
+    "z": "d8033978f947c8e9",
+    "name": "default settings",
+    "func": "flow.set('classThreshold', 6);\nflow.set('quakeOn', true);\nflow.set('quakePct', 50);\nflow.set('quakeMin', 2);\nreturn [{ payload: 6 }, { payload: true }, { payload: 50 }];",
+    "outputs": 3,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 400,
+    "y": 440,
+    "wires": [
+      [
+        "1f595bf53b9a1dcf"
+      ],
+      [
+        "924cbd122e1a76df"
+      ],
+      [
+        "b523bfed251ee1a2"
+      ]
+    ]
+  },
+  {
+    "id": "1f595bf53b9a1dcf",
+    "type": "ui-slider",
+    "z": "d8033978f947c8e9",
+    "group": "062a05bca349ee92",
+    "name": "",
+    "label": "Shake threshold (m/s²)",
+    "tooltip": "",
+    "order": 1,
+    "width": 0,
+    "height": 0,
+    "passthru": false,
+    "outs": "end",
+    "topic": "threshold",
+    "topicType": "str",
+    "thumbLabel": true,
+    "showTicks": "false",
+    "min": 1,
+    "max": 20,
+    "step": 0.5,
+    "className": "",
+    "iconPrepend": "",
+    "iconAppend": "",
+    "color": "",
+    "colorTrack": "",
+    "colorThumb": "",
+    "showTextField": false,
+    "x": 640,
+    "y": 420,
+    "wires": [
+      [
+        "aa9ad0f6a007b54a"
+      ]
+    ]
+  },
+  {
+    "id": "aa9ad0f6a007b54a",
+    "type": "change",
+    "z": "d8033978f947c8e9",
+    "name": "store",
+    "rules": [
+      {
+        "t": "set",
+        "p": "classThreshold",
+        "pt": "flow",
+        "to": "payload",
+        "tot": "msg"
+      }
+    ],
+    "action": "",
+    "property": "",
+    "from": "",
+    "to": "",
+    "reg": false,
+    "x": 860,
+    "y": 420,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "924cbd122e1a76df",
+    "type": "ui-switch",
+    "z": "d8033978f947c8e9",
+    "name": "",
+    "label": "Earthquake detector",
+    "group": "062a05bca349ee92",
+    "order": 2,
+    "width": 0,
+    "height": 0,
+    "passthru": false,
+    "decouple": false,
+    "topic": "quake",
+    "topicType": "str",
+    "style": "",
+    "className": "",
+    "layout": "row-spread",
+    "clickableArea": "switch",
+    "onvalue": "true",
+    "onvalueType": "bool",
+    "onicon": "",
+    "oncolor": "",
+    "offvalue": "false",
+    "offvalueType": "bool",
+    "officon": "",
+    "offcolor": "",
+    "x": 650,
+    "y": 460,
+    "wires": [
+      [
+        "5e937427a05a97aa"
+      ]
+    ]
+  },
+  {
+    "id": "5e937427a05a97aa",
+    "type": "change",
+    "z": "d8033978f947c8e9",
+    "name": "store",
+    "rules": [
+      {
+        "t": "set",
+        "p": "quakeOn",
+        "pt": "flow",
+        "to": "payload",
+        "tot": "msg"
+      }
+    ],
+    "action": "",
+    "property": "",
+    "from": "",
+    "to": "",
+    "reg": false,
+    "x": 860,
+    "y": 460,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "b523bfed251ee1a2",
+    "type": "ui-slider",
+    "z": "d8033978f947c8e9",
+    "group": "062a05bca349ee92",
+    "name": "",
+    "label": "% of sharing phones needed",
+    "tooltip": "",
+    "order": 3,
+    "width": 0,
+    "height": 0,
+    "passthru": false,
+    "outs": "end",
+    "topic": "pct",
+    "topicType": "str",
+    "thumbLabel": true,
+    "showTicks": "false",
+    "min": 10,
+    "max": 100,
+    "step": 5,
+    "className": "",
+    "iconPrepend": "",
+    "iconAppend": "",
+    "color": "",
+    "colorTrack": "",
+    "colorThumb": "",
+    "showTextField": false,
+    "x": 660,
+    "y": 500,
+    "wires": [
+      [
+        "3aacc85ea187bdc9"
+      ]
+    ]
+  },
+  {
+    "id": "3aacc85ea187bdc9",
+    "type": "change",
+    "z": "d8033978f947c8e9",
+    "name": "store",
+    "rules": [
+      {
+        "t": "set",
+        "p": "quakePct",
+        "pt": "flow",
+        "to": "payload",
+        "tot": "msg"
+      }
+    ],
+    "action": "",
+    "property": "",
+    "from": "",
+    "to": "",
+    "reg": false,
+    "x": 860,
+    "y": 500,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "fd29d78e2c0a95e7",
+    "type": "ui-button",
+    "z": "d8033978f947c8e9",
+    "group": "062a05bca349ee92",
+    "name": "",
+    "label": "Forget all phones",
+    "order": 4,
+    "width": 0,
+    "height": 0,
+    "emulateClick": false,
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "",
+    "className": "",
+    "icon": "",
+    "iconPosition": "left",
+    "payload": "forget",
+    "payloadType": "str",
+    "topic": "forget",
+    "topicType": "str",
+    "buttonColor": "",
+    "textColor": "",
+    "iconColor": "",
+    "enableClick": true,
+    "enablePointerdown": false,
+    "pointerdownPayload": "",
+    "pointerdownPayloadType": "str",
+    "enablePointerup": false,
+    "pointerupPayload": "",
+    "pointerupPayloadType": "str",
+    "x": 640,
+    "y": 540,
+    "wires": [
+      [
+        "b5068e0981d9f358"
+      ]
+    ]
+  },
+  {
+    "id": "b5068e0981d9f358",
+    "type": "function",
+    "z": "d8033978f947c8e9",
+    "name": "forget phones",
+    "func": "flow.set('phones', {});\nreturn { payload: [] };",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 860,
+    "y": 540,
+    "wires": [
+      [
+        "a5914c58d212bb79"
+      ]
+    ]
+  },
+  {
+    "id": "3d5c8419ecad72b1",
+    "type": "ui-text-input",
+    "z": "d8033978f947c8e9",
+    "group": "aed58b58c2d12b10",
+    "name": "",
+    "label": "Message to all sharing phones (Enter to send)",
+    "order": 1,
+    "width": 0,
+    "height": 0,
+    "topic": "message",
+    "topicType": "str",
+    "mode": "text",
+    "tooltip": "",
+    "delay": 300,
+    "passthru": true,
+    "sendOnDelay": false,
+    "sendOnBlur": true,
+    "sendOnEnter": true,
+    "className": "",
+    "clearable": false,
+    "sendOnClear": false,
+    "icon": "",
+    "iconPosition": "left",
+    "iconInnerPosition": "inside",
+    "x": 200,
+    "y": 620,
+    "wires": [
+      [
+        "72cb2e2467574526"
+      ]
+    ]
+  },
+  {
+    "id": "9bd7a57a9b4aac95",
+    "type": "ui-button",
+    "z": "d8033978f947c8e9",
+    "group": "aed58b58c2d12b10",
+    "name": "",
+    "label": "Clear message on phones",
+    "order": 2,
+    "width": 0,
+    "height": 0,
+    "emulateClick": false,
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "",
+    "className": "",
+    "icon": "",
+    "iconPosition": "left",
+    "payload": "clear",
+    "payloadType": "str",
+    "topic": "clear",
+    "topicType": "str",
+    "buttonColor": "",
+    "textColor": "",
+    "iconColor": "",
+    "enableClick": true,
+    "enablePointerdown": false,
+    "pointerdownPayload": "",
+    "pointerdownPayloadType": "str",
+    "enablePointerup": false,
+    "pointerupPayload": "",
+    "pointerupPayloadType": "str",
+    "x": 190,
+    "y": 660,
+    "wires": [
+      [
+        "72cb2e2467574526"
+      ]
+    ]
+  },
+  {
+    "id": "72cb2e2467574526",
+    "type": "function",
+    "z": "d8033978f947c8e9",
+    "name": "message to phones",
+    "func": "// Typed message -> every phone that shares with the class. The \"Clear\" button sends topic \"clear\".\nconst now = Date.now();\nif (msg.topic === 'clear') {\n    return { topic: 'ece270/class/broadcast', payload: JSON.stringify({ level: 'clear', t: now }) };\n}\nconst text = String(msg.payload ?? '').trim().slice(0, 200);\nif (!text) return null;\nreturn { topic: 'ece270/class/broadcast', payload: JSON.stringify({ level: 'info', text: text, t: now }) };",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 460,
+    "y": 640,
+    "wires": [
+      [
+        "fa5f669a00528237"
+      ]
+    ]
+  },
+  {
+    "id": "b9e7df6a0ee921bb",
+    "type": "ui-page",
+    "name": "Class Console",
+    "ui": "2d28940ce9b6a583",
+    "path": "/console",
+    "icon": "home",
+    "layout": "grid",
+    "theme": "5d90319147a37d9c",
+    "breakpoints": [
+      {
+        "name": "Default",
+        "px": "0",
+        "cols": "3"
+      },
+      {
+        "name": "Tablet",
+        "px": "576",
+        "cols": "6"
+      },
+      {
+        "name": "Small Desktop",
+        "px": "768",
+        "cols": "9"
+      },
+      {
+        "name": "Desktop",
+        "px": "1024",
+        "cols": "12"
+      }
+    ],
+    "order": 2,
+    "className": "",
+    "visible": "true",
+    "disabled": "false"
+  },
+  {
+    "id": "d5e7c1a91207bdda",
+    "type": "ui-group",
+    "name": "Class",
+    "page": "b9e7df6a0ee921bb",
+    "width": "12",
+    "height": "1",
+    "order": 1,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false",
+    "groupType": "default"
+  },
+  {
+    "id": "bbd7b0ff04e2c4ed",
+    "type": "ui-group",
+    "name": "Fleet",
+    "page": "b9e7df6a0ee921bb",
+    "width": "12",
+    "height": "1",
+    "order": 2,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false",
+    "groupType": "default"
+  },
+  {
+    "id": "14fcec804e4cf676",
+    "type": "ui-group",
+    "name": "Phones",
+    "page": "b9e7df6a0ee921bb",
+    "width": "6",
+    "height": "1",
+    "order": 3,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false",
+    "groupType": "default"
+  },
+  {
+    "id": "062a05bca349ee92",
+    "type": "ui-group",
+    "name": "Controls",
+    "page": "b9e7df6a0ee921bb",
+    "width": "3",
+    "height": "1",
+    "order": 4,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false",
+    "groupType": "default"
+  },
+  {
+    "id": "aed58b58c2d12b10",
+    "type": "ui-group",
+    "name": "Message to phones",
+    "page": "b9e7df6a0ee921bb",
+    "width": "3",
+    "height": "1",
+    "order": 5,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false",
+    "groupType": "default"
+  },
+  {
+    "id": "2d28940ce9b6a583",
+    "type": "ui-base",
+    "name": "ECE 270",
+    "path": "/dashboard",
+    "appIcon": "",
+    "includeClientData": true,
+    "acceptsClientConfig": [
+      "ui-notification",
+      "ui-control"
+    ],
+    "showPathInSidebar": false,
+    "headerContent": "page",
+    "navigationStyle": "default",
+    "titleBarStyle": "default",
+    "showReconnectNotification": true,
+    "notificationDisplayTime": 1,
+    "showDisconnectNotification": true,
+    "allowInstall": false
+  },
+  {
+    "id": "5d90319147a37d9c",
+    "type": "ui-theme",
+    "name": "ECE 270",
+    "colors": {
+      "surface": "#1d2433",
+      "primary": "#0d5fb3",
+      "bgPage": "#f6f7f9",
+      "groupBg": "#ffffff",
+      "groupOutline": "#d9dde5"
+    },
+    "sizes": {
+      "density": "default",
+      "pagePadding": "12px",
+      "groupGap": "12px",
+      "groupBorderRadius": "6px",
+      "widgetGap": "12px"
+    }
+  },
+  {
+    "id": "4df57093ba977687",
+    "type": "mqtt-broker",
+    "name": "Class broker (instructor)",
+    "broker": "YOUR-CLUSTER-ID.s1.eu.hivemq.cloud",
+    "port": "8883",
+    "tls": "9b176e1e4cc44a5a",
+    "clientid": "",
+    "autoConnect": true,
+    "usetls": true,
+    "protocolVersion": "4",
+    "keepalive": "30",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthRetain": "false",
+    "birthPayload": "",
+    "birthMsg": {},
+    "closeTopic": "",
+    "closeQos": "0",
+    "closeRetain": "false",
+    "closePayload": "",
+    "closeMsg": {},
+    "willTopic": "",
+    "willQos": "0",
+    "willRetain": "false",
+    "willPayload": "",
+    "willMsg": {},
+    "userProps": "",
+    "sessionExpiry": "",
+    "credentials": {
+      "user": "instructor"
+    }
+  },
+  {
+    "id": "9b176e1e4cc44a5a",
+    "type": "tls-config",
+    "name": "Class broker TLS",
+    "cert": "",
+    "key": "",
+    "ca": "",
+    "certname": "",
+    "keyname": "",
+    "caname": "",
+    "servername": "",
+    "verifyservercert": true,
+    "alpnprotocol": ""
+  }
+]

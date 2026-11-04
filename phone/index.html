@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1d2433">
+  <title>ECE 270 Shake Alarm</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%230d5fb3%22/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Shake Alarm</h1>
+    <p class="sub">ECE 270 · your phone is the sensor</p>
+  </header>
+
+  <!-- Setup screen -->
+  <main id="setup">
+    <p id="insecure" class="warn" hidden>This page must be opened over <b>https://</b>, otherwise the phone will not share its motion sensor.</p>
+    <p id="broker-warning" class="warn" hidden></p>
+
+    <form id="setup-form" autocomplete="off">
+      <label for="pair">Pairing name</label>
+      <div class="row">
+        <input id="pair" name="pair" inputmode="text" autocapitalize="none" spellcheck="false" required>
+        <button type="button" id="new-name" class="secondary" title="Pick a new random name">New</button>
+      </div>
+      <p class="hint">Type the <b>same name</b> into your laptop's Node-RED dashboard. Your readings go only to that name. Don't use your student number or real name.</p>
+
+      <label for="password">Class password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <label class="check"><input type="checkbox" id="remember" checked> Remember on this phone</label>
+
+      <button type="submit" id="start" class="primary">Start</button>
+      <p id="setup-error" class="error" role="alert"></p>
+    </form>
+    <p class="hint small">Broker: <span id="broker-host"></span></p>
+  </main>
+
+  <!-- Running screen -->
+  <main id="run" hidden>
+    <section id="status-card" class="status waiting" aria-live="polite">
+      <div id="status-word">Waiting for your laptop…</div>
+      <div id="status-detail">Shake the phone once your laptop is paired.</div>
+    </section>
+
+    <section id="broadcast" class="broadcast" hidden aria-live="assertive">
+      <div class="label">From the class console</div>
+      <div id="broadcast-text"></div>
+    </section>
+
+    <section class="meter" aria-label="Shake level">
+      <div class="meter-label"><span>Shake level</span><span id="level-value">0.0 m/s²</span></div>
+      <div class="meter-track"><div id="level-bar"></div><div id="threshold-mark" hidden></div></div>
+    </section>
+
+    <section class="info">
+      <div><span>Pairing name</span><b id="info-pair"></b></div>
+      <div><span>Broker</span><b id="info-conn">Connecting…</b></div>
+      <div><span>Laptop</span><b id="info-laptop">Not seen yet</b></div>
+      <div><span>Sensor</span><b id="info-sensor">Starting…</b></div>
+      <div><span>Readings sent</span><b id="info-sent">0</b></div>
+      <div><span>Laptop's last decision</span><b id="info-laptop-cmd">—</b></div>
+      <div><span>Round trip</span><b id="info-rtt">—</b></div>
+    </section>
+
+    <p id="name-warning" class="warn" hidden>Another phone is using this pairing name. Press Stop and choose a different name.</p>
+    <p id="paused" class="warn" hidden>Paused after <span id="pause-minutes">30</span> minutes to save data. <button type="button" id="resume" class="secondary">Resume</button></p>
+
+    <button type="button" id="tap-shake" class="secondary wide">Simulate a shake</button>
+
+    <details id="advanced">
+      <summary>Class options</summary>
+      <label class="check"><input type="checkbox" id="share"> Share my shake level with the class console</label>
+      <p class="hint">Off by default. When on, the instructor's console sees your pairing name, your shake level and your round-trip time, never the raw sensor data.</p>
+
+      <fieldset>
+        <legend>Who decides the alarm?</legend>
+        <label class="check"><input type="radio" name="decider" value="laptop" checked> My laptop (Node-RED)</label>
+        <label class="check"><input type="radio" name="decider" value="phone"> This phone</label>
+        <label class="check"><input type="radio" name="decider" value="class" id="decider-class" disabled> Class console (needs sharing on)</label>
+      </fieldset>
+      <div id="local-threshold" hidden>
+        <label for="threshold">Phone's threshold: <b id="threshold-value"></b> m/s²</label>
+        <input type="range" id="threshold" min="1" max="20" step="0.5">
+      </div>
+    </details>
+
+    <button type="button" id="stop" class="danger wide">Stop</button>
+  </main>
+
+  <footer>
+    <p>Motion data only. No location, no contacts, no camera. Your pairing name is the only identifier.</p>
+  </footer>
+</body>
+</html>

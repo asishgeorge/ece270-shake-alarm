@@ -1,0 +1,18 @@
+{
+  "name": "shake-alarm-tools",
+  "private": true,
+  "type": "module",
+  "description": "Build, simulation and test tools for the ECE 270 Phone Shake Alarm",
+  "scripts": {
+    "build-flows": "node build-flows.mjs",
+    "test": "node --test logic.test.mjs",
+    "sim": "node sim.mjs",
+    "e2e": "node e2e.mjs"
+  },
+  "dependencies": {
+    "mqtt": "5.16.1"
+  },
+  "devDependencies": {
+    "puppeteer-core": "25.16.0"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "_readme": "The ONLY place the class broker is configured. After editing, run: cd tools && npm run build-flows. That regenerates phone/config.js and node-red/*.json. Never put a password in this file: the repo is public.",
+  "host": "YOUR-CLUSTER-ID.s1.eu.hivemq.cloud",
+  "mqttTlsPort": 8883,
+  "websocketTlsPort": 8884,
+  "websocketPath": "/mqtt",
+  "studentUser": "student",
+  "instructorUser": "instructor",
+  "defaultThreshold": 6,
+  "autoPauseMinutes": 30
+}

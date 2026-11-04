@@ -1,0 +1,11 @@
+# dependencies and local state
+node_modules/
+local/.state/
+.local/
+test-output/
+
+# never commit secrets
+*.secret
+.env*
+
+.DS_Store

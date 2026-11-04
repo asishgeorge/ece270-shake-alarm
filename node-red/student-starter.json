@@ -1,0 +1,570 @@
+[
+  {
+    "id": "98e3f94b01a2d59b",
+    "type": "tab",
+    "label": "Shake Alarm",
+    "disabled": false,
+    "info": "# Shake Alarm\n\n**Already built for you (don't change):** pairing with your phone, the connection status,\nand the node that sends commands back to your phone.\n\n**You build** the part in the middle:\n\n1. A **function** \"shake level\" that turns ax, ay, az into one number.\n2. A **gauge** and a **chart** that show it.\n3. A **switch** that checks if it's above the threshold (flow.threshold).\n4. Two **change** nodes: set msg.payload to ALERT, or to OK.\n5. A **filter** node (block unless value changes).\n6. Wire the filter into \"send to my phone\".\n7. A **slider** wired into \"store threshold\".\n\nThen open http://127.0.0.1:1880/dashboard, type your pairing name, and shake your phone."
+  },
+  {
+    "id": "e612b9c9af24afda",
+    "type": "comment",
+    "z": "98e3f94b01a2d59b",
+    "name": "READ ME: Shake Alarm (double-click)",
+    "info": "# Shake Alarm\n\n**Already built for you (don't change):** pairing with your phone, the connection status,\nand the node that sends commands back to your phone.\n\n**You build** the part in the middle:\n\n1. A **function** \"shake level\" that turns ax, ay, az into one number.\n2. A **gauge** and a **chart** that show it.\n3. A **switch** that checks if it's above the threshold (flow.threshold).\n4. Two **change** nodes: set msg.payload to ALERT, or to OK.\n5. A **filter** node (block unless value changes).\n6. Wire the filter into \"send to my phone\".\n7. A **slider** wired into \"store threshold\".\n\nThen open http://127.0.0.1:1880/dashboard, type your pairing name, and shake your phone.",
+    "x": 170,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "cc3a85703b7bb50a",
+    "type": "comment",
+    "z": "98e3f94b01a2d59b",
+    "name": "Pairing and connection (pre-built)",
+    "info": "",
+    "x": 180,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "8ce4bc5122465753",
+    "type": "ui-text-input",
+    "z": "98e3f94b01a2d59b",
+    "group": "613525280ee01020",
+    "name": "",
+    "label": "Pairing name (same as on your phone)",
+    "order": 1,
+    "width": 0,
+    "height": 0,
+    "topic": "pair",
+    "topicType": "str",
+    "mode": "text",
+    "tooltip": "",
+    "delay": 300,
+    "passthru": true,
+    "sendOnDelay": false,
+    "sendOnBlur": true,
+    "sendOnEnter": true,
+    "className": "",
+    "clearable": false,
+    "sendOnClear": false,
+    "icon": "",
+    "iconPosition": "left",
+    "iconInnerPosition": "inside",
+    "x": 170,
+    "y": 140,
+    "wires": [
+      [
+        "92b0a2851241c56a"
+      ]
+    ]
+  },
+  {
+    "id": "92b0a2851241c56a",
+    "type": "function",
+    "z": "98e3f94b01a2d59b",
+    "name": "pair with my phone",
+    "func": "// Runs when you type a pairing name on the dashboard.\n// It subscribes to YOUR phone only: ece270/pair/<name>/phone/#\nconst name = String(msg.payload ?? '').trim().toLowerCase();\nif (!/^[a-z0-9][a-z0-9-]{2,30}[a-z0-9]$/.test(name)) {\n    node.status({ fill: 'red', shape: 'ring', text: 'invalid pairing name' });\n    return [null, { payload: 'Use 4–32 lowercase letters, numbers or dashes, the same as on your phone.' }];\n}\nflow.set('pair', name);\nflow.set('lastReading', 0);\nflow.set('phoneState', null);\nflow.set('lastCmd', null);\nnode.status({ fill: 'green', shape: 'dot', text: name });\nreturn [\n    [\n        { action: 'unsubscribe', topic: true },\n        { action: 'subscribe', topic: { topic: 'ece270/pair/' + name + '/phone/#', qos: 0 } }\n    ],\n    { payload: 'Paired with \"' + name + '\". Press Start on your phone.' }\n];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 420,
+    "y": 140,
+    "wires": [
+      [
+        "5f39aa848fb2eec4"
+      ],
+      [
+        "08a8ab8472befd4e"
+      ]
+    ]
+  },
+  {
+    "id": "5f39aa848fb2eec4",
+    "type": "mqtt in",
+    "z": "98e3f94b01a2d59b",
+    "name": "my phone",
+    "topic": "",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "aad783200e8ce507",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 1,
+    "x": 640,
+    "y": 120,
+    "wires": [
+      [
+        "8cda585746d168bf"
+      ]
+    ]
+  },
+  {
+    "id": "08a8ab8472befd4e",
+    "type": "ui-text",
+    "z": "98e3f94b01a2d59b",
+    "group": "613525280ee01020",
+    "order": 2,
+    "width": 0,
+    "height": 0,
+    "name": "",
+    "label": "Pairing",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "style": false,
+    "font": "",
+    "fontSize": 16,
+    "color": "#1d2433",
+    "wrapText": true,
+    "className": "",
+    "value": "payload",
+    "valueType": "msg",
+    "x": 650,
+    "y": 180,
+    "wires": []
+  },
+  {
+    "id": "4ecec61b4c363e29",
+    "type": "inject",
+    "z": "98e3f94b01a2d59b",
+    "name": "every second",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "1",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "0.5",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 160,
+    "y": 240,
+    "wires": [
+      [
+        "0b32afa0aabf3ae2"
+      ]
+    ]
+  },
+  {
+    "id": "0b32afa0aabf3ae2",
+    "type": "function",
+    "z": "98e3f94b01a2d59b",
+    "name": "phone connection",
+    "func": "const pair = flow.get('pair');\nconst count = flow.get('count') || 0;\nflow.set('count', 0);\nif (!pair) return { payload: 'Not paired yet. Type a pairing name above.' };\nconst last = flow.get('lastReading') || 0;\nconst age = (Date.now() - last) / 1000;\nif (last && age < 3) return { payload: 'Receiving readings (' + count + ' per second)' };\nif (flow.get('phoneState') === 'offline') return { payload: 'Your phone went offline' };\nif (last) return { payload: 'No readings for ' + Math.round(age) + ' s' };\nreturn { payload: 'Waiting for a phone using \"' + pair + '\"' };",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 380,
+    "y": 240,
+    "wires": [
+      [
+        "5bf6fea9cd3153d4"
+      ]
+    ]
+  },
+  {
+    "id": "5bf6fea9cd3153d4",
+    "type": "ui-text",
+    "z": "98e3f94b01a2d59b",
+    "group": "613525280ee01020",
+    "order": 3,
+    "width": 0,
+    "height": 0,
+    "name": "",
+    "label": "Phone",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "style": false,
+    "font": "",
+    "fontSize": 16,
+    "color": "#1d2433",
+    "wrapText": true,
+    "className": "",
+    "value": "payload",
+    "valueType": "msg",
+    "x": 600,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "43082464434e1ea2",
+    "type": "inject",
+    "z": "98e3f94b01a2d59b",
+    "name": "every 5 s",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "5",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "1",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 150,
+    "y": 300,
+    "wires": [
+      [
+        "b2df4a93ba32d7de"
+      ]
+    ]
+  },
+  {
+    "id": "b2df4a93ba32d7de",
+    "type": "function",
+    "z": "98e3f94b01a2d59b",
+    "name": "tell my phone I'm here",
+    "func": "// Lets your phone show \"Laptop: Connected\", and tells a phone that just (re)started\n// the laptop's current decision (the filter node only sends changes).\nconst pair = flow.get('pair');\nif (!pair) return null;\nconst beat = { state: 'online', last: flow.get('lastCmd') || null, t: Date.now() };\nreturn { topic: 'ece270/pair/' + pair + '/laptop', payload: JSON.stringify(beat) };",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 380,
+    "y": 300,
+    "wires": [
+      [
+        "943a62aa4ec61ec2"
+      ]
+    ]
+  },
+  {
+    "id": "fea2ee6203570c3d",
+    "type": "comment",
+    "z": "98e3f94b01a2d59b",
+    "name": "YOUR NODES GO HERE: wire from \"phone readings\" ... into \"send to my phone\"",
+    "info": "",
+    "x": 330,
+    "y": 380,
+    "wires": []
+  },
+  {
+    "id": "8cda585746d168bf",
+    "type": "function",
+    "z": "98e3f94b01a2d59b",
+    "name": "phone readings (wire from here)",
+    "func": "// Every reading from your phone comes out of this node, 5 times per second.\n// msg.payload = { ax, ay, az, gx, gy, gz, t, seq }   (acceleration in m/s², gravity included)\nif (msg.topic.endsWith('/status')) {          // hello / offline messages from the phone\n    flow.set('phoneState', msg.payload && msg.payload.state);\n    return null;\n}\nconst r = msg.payload;\nif (!r || typeof r.ax !== 'number') return null;\nflow.set('lastReading', Date.now());\nflow.set('count', (flow.get('count') || 0) + 1);\nflow.set('phoneState', 'online');\nmsg.t = r.t;   // when the phone took this reading; used to time the round trip\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 900,
+    "y": 120,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "5cda6f92fcb53759",
+    "type": "function",
+    "z": "98e3f94b01a2d59b",
+    "name": "send to my phone (wire into here)",
+    "func": "// Wire your \"ALERT\" / \"OK\" messages into this node. It addresses them to your phone.\nconst pair = flow.get('pair');\nif (!pair) {\n    node.status({ fill: 'yellow', shape: 'ring', text: 'not paired yet' });\n    return null;\n}\nconst cmd = String(msg.payload).trim().toUpperCase();\nif (cmd !== 'ALERT' && cmd !== 'OK') {\n    node.warn('Send the text ALERT or OK to the phone, not: ' + msg.payload);\n    return null;\n}\nnode.status({ fill: cmd === 'ALERT' ? 'red' : 'green', shape: 'dot', text: cmd });\nflow.set('lastCmd', cmd);\nconst toPhone = {\n    topic: 'ece270/pair/' + pair + '/cmd',\n    payload: JSON.stringify({ cmd: cmd, t: typeof msg.t === 'number' ? msg.t : null })\n};\n// No clock times here: Node.js may have older time-zone rules than the laptop's browser.\nconst n = (flow.get('sentCount') || 0) + 1;\nflow.set('sentCount', n);\nreturn [toPhone, { payload: cmd + '  (command #' + n + ')' }];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 1160,
+    "y": 560,
+    "wires": [
+      [
+        "943a62aa4ec61ec2"
+      ],
+      [
+        "374dbb7c01e33b66"
+      ]
+    ]
+  },
+  {
+    "id": "943a62aa4ec61ec2",
+    "type": "mqtt out",
+    "z": "98e3f94b01a2d59b",
+    "name": "to my phone",
+    "topic": "",
+    "qos": "1",
+    "retain": "false",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "aad783200e8ce507",
+    "x": 1430,
+    "y": 540,
+    "wires": []
+  },
+  {
+    "id": "374dbb7c01e33b66",
+    "type": "ui-text",
+    "z": "98e3f94b01a2d59b",
+    "group": "6fec07493990dd2b",
+    "order": 2,
+    "width": 0,
+    "height": 0,
+    "name": "",
+    "label": "Last command sent to phone",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "style": false,
+    "font": "",
+    "fontSize": 16,
+    "color": "#1d2433",
+    "wrapText": true,
+    "className": "",
+    "value": "payload",
+    "valueType": "msg",
+    "x": 1440,
+    "y": 600,
+    "wires": []
+  },
+  {
+    "id": "0028ee659d57765b",
+    "type": "inject",
+    "z": "98e3f94b01a2d59b",
+    "name": "start-up threshold = 6",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "0.5",
+    "topic": "threshold",
+    "payload": "6",
+    "payloadType": "num",
+    "x": 180,
+    "y": 660,
+    "wires": [
+      [
+        "323e03e33b862252"
+      ]
+    ]
+  },
+  {
+    "id": "323e03e33b862252",
+    "type": "change",
+    "z": "98e3f94b01a2d59b",
+    "name": "store threshold",
+    "rules": [
+      {
+        "t": "set",
+        "p": "threshold",
+        "pt": "flow",
+        "to": "payload",
+        "tot": "msg"
+      }
+    ],
+    "action": "",
+    "property": "",
+    "from": "",
+    "to": "",
+    "reg": false,
+    "x": 450,
+    "y": 660,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "e6e19c95860697e8",
+    "type": "ui-page",
+    "name": "Shake Alarm",
+    "ui": "2d28940ce9b6a583",
+    "path": "/shake",
+    "icon": "home",
+    "layout": "grid",
+    "theme": "5d90319147a37d9c",
+    "breakpoints": [
+      {
+        "name": "Default",
+        "px": "0",
+        "cols": "3"
+      },
+      {
+        "name": "Tablet",
+        "px": "576",
+        "cols": "6"
+      },
+      {
+        "name": "Small Desktop",
+        "px": "768",
+        "cols": "9"
+      },
+      {
+        "name": "Desktop",
+        "px": "1024",
+        "cols": "12"
+      }
+    ],
+    "order": 1,
+    "className": "",
+    "visible": "true",
+    "disabled": "false"
+  },
+  {
+    "id": "613525280ee01020",
+    "type": "ui-group",
+    "name": "Pair with your phone",
+    "page": "e6e19c95860697e8",
+    "width": "4",
+    "height": "1",
+    "order": 1,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false",
+    "groupType": "default"
+  },
+  {
+    "id": "c5f444f7a664947b",
+    "type": "ui-group",
+    "name": "My phone's motion",
+    "page": "e6e19c95860697e8",
+    "width": "8",
+    "height": "1",
+    "order": 2,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false",
+    "groupType": "default"
+  },
+  {
+    "id": "6fec07493990dd2b",
+    "type": "ui-group",
+    "name": "Alarm control",
+    "page": "e6e19c95860697e8",
+    "width": "4",
+    "height": "1",
+    "order": 3,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false",
+    "groupType": "default"
+  },
+  {
+    "id": "2d28940ce9b6a583",
+    "type": "ui-base",
+    "name": "ECE 270",
+    "path": "/dashboard",
+    "appIcon": "",
+    "includeClientData": true,
+    "acceptsClientConfig": [
+      "ui-notification",
+      "ui-control"
+    ],
+    "showPathInSidebar": false,
+    "headerContent": "page",
+    "navigationStyle": "default",
+    "titleBarStyle": "default",
+    "showReconnectNotification": true,
+    "notificationDisplayTime": 1,
+    "showDisconnectNotification": true,
+    "allowInstall": false
+  },
+  {
+    "id": "5d90319147a37d9c",
+    "type": "ui-theme",
+    "name": "ECE 270",
+    "colors": {
+      "surface": "#1d2433",
+      "primary": "#0d5fb3",
+      "bgPage": "#f6f7f9",
+      "groupBg": "#ffffff",
+      "groupOutline": "#d9dde5"
+    },
+    "sizes": {
+      "density": "default",
+      "pagePadding": "12px",
+      "groupGap": "12px",
+      "groupBorderRadius": "6px",
+      "widgetGap": "12px"
+    }
+  },
+  {
+    "id": "aad783200e8ce507",
+    "type": "mqtt-broker",
+    "name": "Class broker (student)",
+    "broker": "YOUR-CLUSTER-ID.s1.eu.hivemq.cloud",
+    "port": "8883",
+    "tls": "9b176e1e4cc44a5a",
+    "clientid": "",
+    "autoConnect": true,
+    "usetls": true,
+    "protocolVersion": "4",
+    "keepalive": "30",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthRetain": "false",
+    "birthPayload": "",
+    "birthMsg": {},
+    "closeTopic": "",
+    "closeQos": "0",
+    "closeRetain": "false",
+    "closePayload": "",
+    "closeMsg": {},
+    "willTopic": "",
+    "willQos": "0",
+    "willRetain": "false",
+    "willPayload": "",
+    "willMsg": {},
+    "userProps": "",
+    "sessionExpiry": "",
+    "credentials": {
+      "user": "student"
+    }
+  },
+  {
+    "id": "9b176e1e4cc44a5a",
+    "type": "tls-config",
+    "name": "Class broker TLS",
+    "cert": "",
+    "key": "",
+    "ca": "",
+    "certname": "",
+    "keyname": "",
+    "caname": "",
+    "servername": "",
+    "verifyservercert": true,
+    "alpnprotocol": ""
+  }
+]
