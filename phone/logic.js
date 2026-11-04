@@ -77,13 +77,18 @@ export class PeakWindow {
 const r2 = (x) => Math.round(x * 100) / 100;
 const r1 = (x) => Math.round(x * 10) / 10;
 
-/** The JSON message the phone publishes to its readings topic. */
-export function readingPayload(sample, t, seq) {
-  return {
+/**
+ * The JSON message the phone publishes to its readings topic. While recording, `rec`
+ * (one batch from recordingBatch) rides along in the same message.
+ */
+export function readingPayload(sample, t, seq, rec) {
+  const msg = {
     ax: r2(sample.ax), ay: r2(sample.ay), az: r2(sample.az),
     gx: r1(sample.gx ?? 0), gy: r1(sample.gy ?? 0), gz: r1(sample.gz ?? 0),
     t, seq,
   };
+  if (rec) msg.rec = rec;
+  return msg;
 }
 
 /**
@@ -101,6 +106,80 @@ export function syntheticSample(tMs, shaking, rand = Math.random) {
     az: 6 * Math.sin(2 * w) + noise(),
     gx: 200 * Math.cos(w), gy: 150 * Math.sin(w), gz: 50 * Math.sin(2 * w),
   };
+}
+
+// ---------------------------------------------------------------- recording
+// "Record N s" keeps every sample for a few seconds (not just the strongest one per 200 ms)
+// and sends them in batches inside the normal readings messages, so it adds no messages.
+
+export const REC_MIN_GAP_MS = 15; // at most ~66 kept samples per second
+
+/** The ?recsec=N link option: a whole number of seconds from 1 to 60, otherwise null. */
+export function parseRecSec(value) {
+  const text = String(value ?? '').trim();
+  if (!/^\d{1,2}$/.test(text)) return null;
+  const n = Number(text);
+  return n >= 1 && n <= 60 ? n : null;
+}
+
+/**
+ * Collects the samples of a recording as rows [ms, ax, ay, az, gx, gy, gz], where ms is
+ * whole milliseconds since the recording started. A sample less than minGapMs after the
+ * last kept one is dropped, so times always go up and very fast sensors are capped.
+ */
+export class RecordingBuffer {
+  constructor(minGapMs = REC_MIN_GAP_MS) {
+    this.minGapMs = minGapMs;
+    this.rows = [];
+    this.lastMs = -Infinity;
+  }
+  /** Returns true if the sample was kept. */
+  add(ms, s) {
+    const t = Math.floor(ms);
+    if (!(t >= 0) || t - this.lastMs < this.minGapMs) return false;
+    this.lastMs = t;
+    this.rows.push([t, s.ax, s.ay, s.az, s.gx ?? 0, s.gy ?? 0, s.gz ?? 0]);
+    return true;
+  }
+  /** All samples since the last drain, oldest first. */
+  drain() {
+    const rows = this.rows;
+    this.rows = [];
+    return rows;
+  }
+}
+
+/** One batch of a recording: the "rec" field of a readings message. Values are rounded like readings. */
+export function recordingBatch({ id, start, dur }, i, end, rows) {
+  return {
+    id, i, start, dur, end: Boolean(end),
+    s: rows.map(([ms, ax, ay, az, gx, gy, gz]) => [Math.round(ms), r2(ax), r2(ay), r2(az), r1(gx), r1(gy), r1(gz)]),
+  };
+}
+
+/**
+ * Made-up motion for a recording on a phone without a motion sensor, so the recording
+ * shows four different movements over its duration:
+ *   0–20 %  still, gravity on y
+ *  20–45 %  a slow tilt: gravity (9.81) turns from y towards z and back
+ *  45–70 %  shaking (same as "Simulate a shake")
+ *  70–100 % drawing a circle in the air: 3 m/s² going round in the x–y plane, once per second
+ * Pure: the same time always gives the same sample.
+ */
+export function recordingSimSample(msSinceStart, durMs) {
+  const f = msSinceStart / durMs;
+  if (f < 0.2) return { ax: 0, ay: GRAVITY, az: 0, gx: 0, gy: 0, gz: 0 };
+  if (f < 0.45) {
+    const tiltS = (0.25 * durMs) / 1000;
+    const p = (msSinceStart - 0.2 * durMs) / (0.25 * durMs); // 0 -> 1
+    const angle = (Math.PI / 4) * (1 - Math.cos(2 * Math.PI * p)); // 0 -> 90° -> 0, smooth at both ends
+    const rate = ((Math.PI / 4) * 2 * Math.PI * Math.sin(2 * Math.PI * p)) / tiltS; // rad/s
+    // Turning about the phone's x axis is rotationRate.beta, which we send as gy.
+    return { ax: 0, ay: GRAVITY * Math.cos(angle), az: GRAVITY * Math.sin(angle), gx: 0, gy: (-rate * 180) / Math.PI, gz: 0 };
+  }
+  if (f < 0.7) return syntheticSample(msSinceStart, true, () => 0.5); // 0.5: no random noise
+  const w = 2 * Math.PI * ((msSinceStart - 0.7 * durMs) / 1000);
+  return { ax: 3 * Math.cos(w), ay: GRAVITY + 3 * Math.sin(w), az: 0, gx: 0, gy: 0, gz: 0 };
 }
 
 // ---------------------------------------------------------------- commands

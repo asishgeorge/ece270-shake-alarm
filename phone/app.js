@@ -2,12 +2,14 @@
 // Reads the phone's motion sensor, publishes 5 readings/s over MQTT (WebSocket + TLS)
 // to ece270/pair/<pairing name>/phone, and shows the decision sent back by the student's
 // Node-RED flow (or made on the phone, or by the class console) as words on the screen.
+// "Record N s" sends every sample for a few seconds, in batches inside those same readings.
 
 import mqtt from './vendor/mqtt-5.16.1.esm.js';
 import { CONFIG } from './config.js';
 import {
   topics, validatePairName, randomPairName, PeakWindow, readingPayload, syntheticSample,
   shakeLevel, parseCommand, roundTrip, StatusHold, localDecision, RollingMedian, classDecisionFor,
+  parseRecSec, RecordingBuffer, recordingBatch, recordingSimSample,
 } from './logic.js';
 
 const PUBLISH_MS = 200;          // 5 readings per second
@@ -16,6 +18,8 @@ const SHARE_EVERY = 2;           // class summary every 2nd reading (2.5/s): wit
 const LAPTOP_TIMEOUT_MS = 12000; // laptop heartbeat is every 5 s
 const BROADCAST_ALERT_MS = 20000;
 const NO_SENSOR_AFTER_MS = 2500;
+const REC_COUNTDOWN_MS = 3000;
+const REC_SIM_STEP_MS = 20;      // simulated recordings: 50 samples per second
 
 const params = new URLSearchParams(location.search);
 const BROKER_URL = params.get('broker') || CONFIG.brokerUrl;
@@ -23,6 +27,7 @@ const USERNAME = params.has('user') ? params.get('user') : CONFIG.username;
 const FORCE_SIM = params.has('sim'); // tests and laptops: no motion sensor, use simulated shakes
 const BROKER_OVERRIDDEN = params.has('broker');
 const BROKER_CONFIGURED = !/YOUR-CLUSTER/i.test(BROKER_URL);
+const REC_SECONDS = parseRecSec(params.get('recsec')) ?? CONFIG.recordSeconds ?? 20;
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -41,6 +46,7 @@ const S = {
   rtt: new RollingMedian(10), lastRtt: null,
   hold: new StatusHold(1000), shown: 'WAIT', shownAt: 0,
   broadcastAt: 0, broadcastLevel: null, wakeLock: null, nameConflict: false,
+  lastMotion: null, rec: { phase: 'idle' }, // phase: idle, countdown, recording, done
 };
 
 // ------------------------------------------------------------------ setup screen
@@ -108,6 +114,7 @@ function start(pair, password, permission) {
     pair, T: topics(pair), running: true, paused: false, startedAt: Date.now(), seq: 0, sent: 0,
     laptopSeenAt: 0, laptopCmd: null, laptopCmdAt: 0, classCmd: null, lastRtt: null, nameConflict: false,
     hold: new StatusHold(1000), rtt: new RollingMedian(10), sentSet: new Set(), sentQueue: [],
+    lastMotion: null, rec: { phase: 'idle' },
   });
   $('info-pair').textContent = pair;
   $('name-warning').hidden = true;
@@ -140,6 +147,8 @@ function stop(reason) {
   clearInterval(S.timer);
   window.removeEventListener('devicemotion', onMotion);
   S.running = false;
+  S.rec = { phase: 'idle' };
+  renderRecord();
   S.share = false;
   $('share').checked = false;
   $('decider-class').disabled = true;
@@ -155,7 +164,15 @@ function onMotion(e) {
   if (!a || a.x == null || a.y == null || a.z == null) return;
   const r = e.rotationRate || {};
   S.sensor = 'ok';
-  S.win.add({ ax: a.x, ay: a.y, az: a.z, gx: r.alpha ?? 0, gy: r.beta ?? 0, gz: r.gamma ?? 0 });
+  const sample = { ax: a.x, ay: a.y, az: a.z, gx: r.alpha ?? 0, gy: r.beta ?? 0, gz: r.gamma ?? 0 };
+  S.win.add(sample);
+  S.lastMotion = sample;
+  // While recording, keep every sample (during "Simulate a shake", tick() records shaking ones instead).
+  const R = S.rec;
+  if (R.phase === 'recording' && Date.now() >= S.burstUntil) {
+    const ms = performance.now() - R.startPerf;
+    if (ms < R.durMs) R.buf.add(ms, sample);
+  }
 }
 
 function burstSample(now) {
@@ -180,11 +197,17 @@ function tick() {
   if (now < S.burstUntil) sample = burstSample(now);
   else if (S.sensor !== 'ok') sample = syntheticSample(now, false);
 
+  // While recording, a batch of samples rides along in this tick's readings message, and a
+  // message goes out on every tick, even if the sensor sent nothing in this window.
+  const rec = recordStep(now);
+  if (rec && !sample) sample = S.lastMotion || syntheticSample(now, false);
+
   if (sample && !S.paused) {
     S.level = shakeLevel(sample);
     const seq = ++S.seq;
     if (S.client?.connected) {
-      S.client.publish(S.T.readings, JSON.stringify(readingPayload(sample, now, seq)), { qos: 0 });
+      S.client.publish(S.T.readings, JSON.stringify(readingPayload(sample, now, seq, rec)), { qos: 0 });
+      if (rec) S.rec.sent += rec.s.length;
       rememberSent(now);
       S.sent += 1;
       if (S.share) {
@@ -202,8 +225,11 @@ function tick() {
     if (S.decider === 'phone') requestStatus(localDecision(S.level, S.threshold));
   }
 
+  if (rec?.end) S.rec.phase = 'done'; // a batch that could not be sent is lost, not kept for later
+
   if (S.broadcastLevel === 'alert' && now - S.broadcastAt > BROADCAST_ALERT_MS) hideBroadcast();
   renderInfo(now);
+  renderRecord();
 }
 
 // Auto-pause also disconnects: the free broker plan counts connected minutes.
@@ -229,6 +255,61 @@ function rememberSent(t) {
   S.sentSet.add(t);
   S.sentQueue.push(t);
   if (S.sentQueue.length > 400) S.sentSet.delete(S.sentQueue.shift());
+}
+
+// ------------------------------------------------------------------ recording
+
+function recordingBusy() {
+  return S.rec.phase === 'countdown' || S.rec.phase === 'recording';
+}
+
+function onRecordClick() {
+  if (!S.running || !S.client?.connected || recordingBusy()) return;
+  S.rec = { phase: 'countdown', countdownEnd: performance.now() + REC_COUNTDOWN_MS };
+  renderRecord();
+}
+
+/** Once per tick: moves the recording along. Returns the batch to send with this tick, or null. */
+function recordStep(now) {
+  const R = S.rec;
+  const p = performance.now();
+  if (R.phase === 'countdown') {
+    if (p >= R.countdownEnd) {
+      Object.assign(R, {
+        phase: 'recording', id: `${S.cid}-${now}`, start: now, dur: REC_SECONDS,
+        startPerf: p, durMs: REC_SECONDS * 1000, i: 0, simMs: 0, buf: new RecordingBuffer(), sent: 0,
+      });
+    }
+    return null;
+  }
+  if (R.phase !== 'recording') return null;
+
+  const elapsed = p - R.startPerf;
+  const shaking = now < S.burstUntil;
+  if (shaking || S.sensor !== 'ok') {
+    // No real sensor, or "Simulate a shake": make the samples up, 50 per second.
+    for (; R.simMs <= elapsed && R.simMs < R.durMs; R.simMs += REC_SIM_STEP_MS) {
+      R.buf.add(R.simMs, shaking ? syntheticSample(R.simMs, true) : recordingSimSample(R.simMs, R.durMs));
+    }
+  } else {
+    // Real samples arrive in onMotion; keep the made-up clock in step in case a shake is simulated.
+    R.simMs = Math.max(R.simMs, Math.ceil(elapsed / REC_SIM_STEP_MS) * REC_SIM_STEP_MS);
+  }
+  return recordingBatch(R, R.i++, elapsed >= R.durMs, R.buf.drain());
+}
+
+function renderRecord() {
+  const R = S.rec;
+  const p = performance.now();
+  $('record').disabled = !S.running || !S.client?.connected || recordingBusy();
+  let text = '';
+  if (R.phase === 'countdown') text = `Get ready… ${Math.max(1, Math.ceil((R.countdownEnd - p) / 1000))}`;
+  else if (R.phase === 'recording') text = `Recording… ${Math.max(1, Math.ceil((R.startPerf + R.durMs - p) / 1000))} s left`;
+  else if (R.phase === 'done') text = `Recording sent: ${R.sent} readings`;
+  const el = $('rec-status');
+  el.hidden = !text;
+  el.classList.toggle('on', R.phase === 'recording');
+  if (el.textContent !== text) el.textContent = text;
 }
 
 // ------------------------------------------------------------------ MQTT
@@ -373,7 +454,10 @@ function renderStatus(state) {
   }
 }
 
-function setConn(text) { $('info-conn').textContent = text; }
+function setConn(text) {
+  $('info-conn').textContent = text;
+  renderRecord();
+}
 
 function ago(ms) {
   const s = Math.round(ms / 1000);
@@ -427,6 +511,8 @@ function showNameConflict() {
 
 function initRunControls() {
   $('tap-shake').addEventListener('click', () => { S.burstUntil = Date.now() + 1500; });
+  $('record').textContent = `Record ${REC_SECONDS} s`;
+  $('record').addEventListener('click', onRecordClick);
   $('stop').addEventListener('click', () => stop());
   $('resume').addEventListener('click', resume);
 

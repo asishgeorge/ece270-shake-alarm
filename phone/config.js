@@ -4,5 +4,6 @@ export const CONFIG = {
   username: "student",
   defaultThreshold: 6,
   shakeScaleMax: 30,
+  recordSeconds: 20,
   autoPauseMinutes: 30,
 };

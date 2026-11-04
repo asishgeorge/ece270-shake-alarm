@@ -48,6 +48,8 @@ button.primary { background: var(--primary); color: #fff; border-color: var(--pr
 button.danger { background: var(--card); color: var(--alert); border-color: var(--alert); }
 button.wide { width: 100%; margin-top: 12px; }
 button:disabled { opacity: 0.5; }
+.actions { margin-top: 12px; }
+.actions button { flex: 1; }
 
 .hint { color: var(--muted); font-size: 0.92rem; margin: 6px 0 0; }
 .small { font-size: 0.8rem; overflow-wrap: anywhere; }
@@ -83,6 +85,10 @@ button:disabled { opacity: 0.5; }
 .info div:first-child { border-top: 0; }
 .info span { color: var(--muted); }
 .info b { text-align: right; overflow-wrap: break-word; }
+
+.rec-status { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; text-align: center; font-weight: 600;
+  background: var(--card); border: 2px solid var(--line); }
+.rec-status.on { border-color: var(--primary); }
 
 details { margin-top: 14px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 summary { font-weight: 700; }

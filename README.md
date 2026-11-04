@@ -71,12 +71,32 @@ local/node-red.sh restart    # clean slate before a demo: clears pairings, gauge
    - Choose **Class console** as the decision maker.
    - Send a message from the console; it shows on the phone.
    - With 2 or more phones sharing, shake them together for the **earthquake alert**.
-7. **Privacy and security:**
+7. **What the data looks like.** On the phone, tap **Record 20 s**: hold still, turn the phone slowly, shake, then draw a circle in the air. The Recording panel shows the time series and the 3D gravity sphere. Slide the window along to see each movement, and download the CSV.
+8. **Privacy and security:**
    - There are no student IDs.
    - The console sees only phones that opt in, and never their raw sensor data.
    - Students can't post console messages: the broker refuses them.
 
 ---
+
+## Recording: see what the sensor data looks like
+
+On the phone, tap **Record 20 s**. After a 3-second countdown the phone sends **every** sensor reading for 20 seconds, about 50 per second. A new **Recording** panel on the student dashboard (`/dashboard/shake`) then shows:
+
+- **Time series:** ax, ay, az and the shake level over the recording.
+- **3D view:** every reading as a dot (ax, ay, az), inside a see-through "gravity sphere" of radius 9.81 m/s². Drag it to turn it.
+  - A phone held still sits on the sphere.
+  - Turning the phone moves the dots around the sphere.
+  - Shaking throws them off it. That's exactly what the shake level measures.
+- **Window start / Window width:** a 1, 2 or 5 s slice that slides through the recording. The slice is shaded on the time series and drawn as a coloured path in 3D.
+- **Download CSV:** saves the recording to the computer's Downloads folder. The columns are `time_s, ax, ay, az, gx, gy, gz, shake`, ready for Python, Excel or Orange.
+
+**Details:**
+- **Message rate.** The readings ride inside the phone's normal 5 messages per second, so recording never adds messages. That matters because of the broker's 10 messages/s limit.
+- **Privacy.** A recording goes only to the paired laptop and is never stored on the broker. Pairing a **different** name clears the panel, so the next person doesn't see the previous phone's data. Re-pairing with the same name, for example after a Deploy, keeps it.
+- **Simulated phones.** Phones without a motion sensor, and the test page (`?sim=1`), record a scripted still → turn → shake → circle sequence.
+- **Plotting library.** The panel draws with Plotly, loaded from cdn.plot.ly. The laptop needs internet, which it already needs for the broker.
+- **Length.** The recording length is `recordSeconds` in `class-broker.json`; phone links can override it with `?recsec=N`.
 
 ## Running it in class
 
@@ -187,13 +207,14 @@ Run these in `tools/` after `npm install`. Tests against the class broker read `
 | `npm test` | Unit tests for the phone logic |
 | `npm run broker-check` | The class broker: logins, ports, deny rules |
 | `E2E_TARGET=class PHONE_URL='https://asishgeorge.github.io/ece270-shake-alarm/?sim=1' CONSOLE_DASH=http://127.0.0.1:1880/dashboard/console npm run e2e` | 18 checks in headless Chrome, on the real path: live phone page → EMQX → the demo Node-RED. Needs the demo setup running. |
+| `E2E_TARGET=class PHONE_URL='https://asishgeorge.github.io/ece270-shake-alarm/?sim=1&recsec=6' STUDENT_DASH=http://127.0.0.1:1880/dashboard/shake npm run e2e-recording` | 31 checks for Recording on the real path. Covers the countdown, every batch arriving, no extra messages (at most 5.5/s), the alarm still working, the dashboard count matching the phone, both plots, the slider, and the CSV matching the data sent. |
 | `npm run sim -- --class --phones 30 --seconds 60 --share` | 30 simulated phones + 30 laptops + the real console against EMQX. It uses some of the free quota, so keep it short. |
 
 **Offline tests with no cloud:** `local/start-broker.sh` runs a local Mosquitto with test logins (`student`/`dev-student`, `instructor`/`dev-instructor`). Then:
 1. Run `node build-flows.mjs --local ../.local --student-pass dev-student --instructor-pass dev-instructor`.
 2. Load those flows into two test copies of Node-RED, on ports 1880 (student) and 1881 (console). Stop the demo Node-RED first.
 3. Serve `phone/` on port 8080.
-4. Then `npm run e2e` and `npm run sim -- --share` run against that setup.
+4. Then `npm run e2e`, `npm run e2e-recording` and `npm run sim -- --share` run against that setup. Each test's file lists its default addresses (`PHONE_URL`, `STUDENT_DASH`, `CONSOLE_DASH`); set those to match your ports.
 
 ---
 
@@ -205,6 +226,8 @@ Run these in `tools/` after `npm install`. Tests against the class broker read `
 | Dashboard says **Not connected to the class broker** | Wrong or missing password in the broker's Security tab. |
 | Phone says **The broker did not accept the class password** | Password typo. On the phone, Stop, then Start again. |
 | Phone stops sending | The screen locked or the browser went to the background. Bring the page to the front. |
+| Recording panel says it couldn't load the plotting library | The laptop can't reach cdn.plot.ly (no internet, or a blocked site). Download CSV still works. |
+| Recording says "incomplete" | Some batches didn't arrive: the phone's connection dropped, or the page went to the background. Record again with the page in front. |
 | Gauge shows an old value | The dashboard remembers the last value until new readings arrive. `local/node-red.sh restart` clears it. |
 | Port 8883 blocked on a network | Set the Node-RED broker to `wss://<host>:8084/mqtt`. |
 | Phone page didn't update after a push | Check the "Publish phone page" workflow on GitHub. It sometimes times out on GitHub's side; re-run it. Settings → Environments → github-pages must allow the `main` branch. |
@@ -225,7 +248,7 @@ tools/
   build-flows.mjs          generates node-red/*.json and phone/config.js
   deploy-demo.mjs          loads solution + console into the local Node-RED with passwords
   broker-check.mjs         checks the class broker
-  e2e.mjs, sim.mjs, logic.test.mjs   tests
+  e2e.mjs, e2e-recording.mjs, sim.mjs, logic.test.mjs   tests
 local/
   setup-node-red.sh        one-time Node-RED install for the instructor's laptop
   node-red.sh              start / stop / restart / status / log

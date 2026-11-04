@@ -68,7 +68,11 @@
     <p id="name-warning" class="warn" hidden>Another phone is using this pairing name. Press Stop and choose a different name.</p>
     <p id="paused" class="warn" hidden>Paused after <span id="pause-minutes">30</span> minutes to save data. <button type="button" id="resume" class="secondary">Resume</button></p>
 
-    <button type="button" id="tap-shake" class="secondary wide">Simulate a shake</button>
+    <div class="row actions">
+      <button type="button" id="tap-shake" class="secondary">Simulate a shake</button>
+      <button type="button" id="record" class="secondary" disabled>Record 20 s</button>
+    </div>
+    <p id="rec-status" class="rec-status" hidden aria-live="polite"></p>
 
     <details id="advanced">
       <summary>Class options</summary>

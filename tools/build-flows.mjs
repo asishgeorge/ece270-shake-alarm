@@ -171,8 +171,11 @@ const CODE = {
 const name = String(msg.payload ?? '').trim().toLowerCase();
 if (!${PAIR_RE}.test(name)) {
     node.status({ fill: 'red', shape: 'ring', text: 'invalid pairing name' });
-    return [null, { payload: 'Use 4–32 lowercase letters, numbers or dashes, the same as on your phone.' }];
+    return [null, { payload: 'Use 4–32 lowercase letters, numbers or dashes, the same as on your phone.' }, null];
 }
+// A different phone: clear the previous phone's recording from the Recording panel
+// (output 3). Re-pairing with the same name, e.g. after a Deploy, keeps it.
+const newName = name !== flow.get('pair');
 flow.set('pair', name);
 flow.set('pairedAt', Date.now());
 flow.set('lastReading', 0);
@@ -187,7 +190,8 @@ return [
         { action: 'unsubscribe', topic: true },
         { action: 'subscribe', topic: { topic: 'ece270/pair/' + name + '/phone/#', qos: 0 } }
     ],
-    { payload: 'Paired with "' + name + '". Press Start on your phone.' }
+    { payload: 'Paired with "' + name + '". Press Start on your phone.' },
+    newName ? { topic: 'recording', payload: { state: 'idle' } } : null
 ];`,
 
   router: `// Every reading from your phone comes out of this node, 5 times per second.
@@ -292,12 +296,444 @@ return msg;`,
 const g = Math.sqrt(ax*ax + ay*ay + az*az);      // about 9.8 when still
 msg.payload = +Math.abs(g - 9.81).toFixed(2);    // 0 = still, bigger = shaking
 return msg;`,
+
+  recorder: `// Pre-built: collects a recording when you tap Record on your phone. You don't need to change it.
+// While the phone records, each reading also carries msg.payload.rec, a batch of fast readings:
+//   { id, i: batch number 0,1,2..., start, dur: planned seconds, end: true on the last batch,
+//     s: [[ms, ax, ay, az, gx, gy, gz], ...] }      ms = milliseconds since the recording started
+// The "every second" input (topic "tick") notices a phone that stopped sending.
+// Output, to the "Recording" panel:
+//   { state: 'recording', seconds, dur }            at most once per second while recording
+//   { state: 'ready', pair, startedAt, dur, rows, count, complete, missingBatches }
+//   each row: [time_s, ax, ay, az, gx, gy, gz, shake]
+const MAX_MS = 120000;      // keep at most 120 s of readings, ignore anything later
+const MAX_ROWS = 30000;     // and never more rows than this
+const QUIET_MS = 3000;      // no batch for 3 s: the recording ended without its last batch
+const now = Date.now();
+const pair = flow.get('pair') || '';
+const out = [];
+let rec = context.get('rec') || null;
+const num = (v) => (typeof v === 'number' && isFinite(v)) ? v : null;
+
+function progress(r) {
+    r.statusAt = now;
+    const seconds = Math.floor(r.maxMs / 1000);
+    node.status({ fill: 'blue', shape: 'dot', text: 'recording ' + seconds + ' s' });
+    return { topic: 'recording', payload: { state: 'recording', seconds: seconds, dur: r.dur } };
+}
+
+function finish(r, gotEnd) {
+    const last = r.endIndex >= 0 ? r.endIndex : r.maxIndex;
+    let got = 0;
+    for (const k of Object.keys(r.got)) if (Number(k) <= last) got++;
+    const missingBatches = Math.max(0, last + 1 - got);
+    const complete = gotEnd && missingBatches === 0;
+    r.rows.sort((a, b) => a[0] - b[0]);
+    context.set('done', (context.get('done') || []).concat(r.id).slice(-10));   // ignore late batches
+    node.status({ fill: complete ? 'green' : 'yellow', shape: 'dot',
+        text: r.rows.length + ' readings' + (complete ? '' : ', incomplete') });
+    return { topic: 'recording', payload: {
+        state: 'ready', pair: r.pair, startedAt: r.startedAt, dur: r.dur, rows: r.rows,
+        count: r.rows.length, complete: complete, missingBatches: missingBatches } };
+}
+
+// A new pairing name: forget a recording in progress.
+if (rec && rec.pair !== pair) {
+    rec = null;
+    node.status({});
+    out.push({ topic: 'recording', payload: { state: 'idle' } });
+}
+
+const b = msg.topic !== 'tick' && msg.payload ? msg.payload.rec : null;
+if (b && typeof b === 'object' && b.id !== undefined && b.id !== null && b.id !== ''
+        && !(context.get('done') || []).includes(String(b.id))) {
+    const recId = String(b.id);
+    if (rec && rec.id !== recId) {            // a new recording started before the old one ended
+        out.push(finish(rec, false));
+        rec = null;
+    }
+    if (!rec) {
+        rec = { id: recId, pair: pair, startedAt: num(b.start) || now, dur: num(b.dur) || 0,
+                got: {}, maxIndex: -1, endIndex: -1, maxMs: 0, rows: [], lastAt: now, statusAt: 0 };
+    }
+    const i = Number.isInteger(b.i) && b.i >= 0 ? b.i : -1;
+    if (i < 0 || !rec.got[i]) {               // skip a batch that arrived twice
+        if (i >= 0) { rec.got[i] = true; rec.maxIndex = Math.max(rec.maxIndex, i); }
+        rec.lastAt = now;
+        for (const s of Array.isArray(b.s) ? b.s : []) {
+            if (!Array.isArray(s)) continue;
+            const ms = num(s[0]), ax = num(s[1]), ay = num(s[2]), az = num(s[3]);
+            if (ms === null || ms < 0 || ax === null || ay === null || az === null) continue;
+            if (ms > MAX_MS || rec.rows.length >= MAX_ROWS) continue;
+            rec.maxMs = Math.max(rec.maxMs, ms);
+            const g = Math.sqrt(ax*ax + ay*ay + az*az);
+            rec.rows.push([+(ms / 1000).toFixed(3), ax, ay, az, num(s[4]), num(s[5]), num(s[6]),
+                           +Math.abs(g - 9.81).toFixed(2)]);
+        }
+    }
+    if (b.end === true) {
+        rec.endIndex = i >= 0 ? i : rec.maxIndex;
+        out.push(finish(rec, true));
+        rec = null;
+    } else if (now - rec.statusAt >= 1000) {
+        out.push(progress(rec));
+    }
+}
+
+if (rec && now - rec.lastAt > QUIET_MS) {
+    out.push(finish(rec, false));
+    rec = null;
+} else if (rec && msg.topic === 'tick' && now - rec.statusAt >= 1000) {
+    out.push(progress(rec));
+}
+context.set('rec', rec);
+return out.length ? [out] : null;`,
 };
+
+// ------------------------------------------------------------------ recording panel (ui-template)
+
+// Plotly's official "gl3d" partial bundle: scatter, scatter3d, surface, mesh3d and a few more 3D types.
+// 1.76 MB (about 560 kB over the network), against 4.8 MB for the full bundle. Pinned, with its hash,
+// so the browser refuses the file if the CDN ever serves different bytes.
+const PLOTLY_URL = 'https://cdn.plot.ly/plotly-gl3d-4.2.0.min.js';
+const PLOTLY_SRI = 'sha384-FIPest0F2WAPBZywmHOfM9f+AiwK/u8Ofa/lKAhctEZkupuN7c4zxUyFsbc2QHPq';
+
+// A Vue component. The dashboard parses <template> as HTML, so the template avoids <, > and & in
+// expressions (they live in computed values), and the script avoids ?. and ?? (its parser is older).
+const RECORDING_PANEL = `<template>
+  <div class="shake-recording">
+    <div class="rec-status" :class="statusClass">{{ statusText }}</div>
+    <div class="rec-detail" v-if="detailText">{{ detailText }}</div>
+    <div class="rec-body" v-show="state === 'ready'">
+      <div class="rec-controls">
+        <label class="rec-control">Window start
+          <input type="range" class="rec-slider" min="0" :max="sliderMax" step="0.1" :value="start"
+                 :disabled="width === 'all'" @input="onSlide">
+        </label>
+        <span class="rec-window">{{ windowText }}</span>
+        <label class="rec-control">Window width
+          <select class="rec-width" v-model="width" @change="onWidth">
+            <option value="1">1 s</option>
+            <option value="2">2 s</option>
+            <option value="5">5 s</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        <button type="button" class="rec-download" @click="download">Download CSV</button>
+      </div>
+      <div class="rec-plot-msg" v-if="plotMsg">{{ plotMsg }}</div>
+      <div class="rec-timeseries"></div>
+      <div class="rec-caption">Shaded: the window you chose. Move the slider to slide it along the recording.</div>
+      <div class="rec-3d-row">
+        <div class="rec-3d"></div>
+        <div class="rec-caption">Each dot is one reading of (ax, ay, az). Held still, the phone feels only gravity, so its
+          dots sit on the sphere of radius 9.81 m/s². Turning the phone moves them around the sphere; shaking throws them
+          off it. The chosen window is drawn as a line, light blue at its start and dark blue at its end.
+          Drag the plot to rotate it.</div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+export default {
+    data() {
+        return {
+            state: 'idle', seconds: 0, dur: 0, count: 0, span: 0, complete: true, missing: 0,
+            pair: '', startedAt: 0, start: 0, width: '2', plotly: 'loading'
+        };
+    },
+    computed: {
+        statusText() {
+            if (this.state === 'recording') return 'Recording from your phone… ' + this.seconds + ' s';
+            if (this.state !== 'ready') return 'No recording yet. On your phone, tap Record.';
+            let t = 'Recording: ' + this.count + ' readings over ' + this.span.toFixed(1) + ' s';
+            if (this.missing > 0) t += ' (incomplete: ' + this.missing + ' batches missing)';
+            else if (!this.complete) t += ' (incomplete: the phone stopped sending before the end)';
+            return t;
+        },
+        statusClass() {
+            if (this.state === 'ready' && !this.complete) return 'rec-incomplete';
+            return 'rec-' + this.state;
+        },
+        detailText() {
+            if (this.state !== 'ready' || !this.startedAt) return '';
+            const d = new Date(this.startedAt);
+            const p2 = function (n) { return String(n).padStart(2, '0'); };
+            return 'From the phone "' + this.pair + '", started at ' + p2(d.getHours()) + ':' + p2(d.getMinutes()) +
+                ':' + p2(d.getSeconds()) + '.';
+        },
+        sliderMax() {
+            if (this.width === 'all') return 0;
+            return Math.max(0, Math.round((this.span - Number(this.width)) * 10) / 10);
+        },
+        windowText() {
+            const w = this.windowRange();
+            return 'Showing ' + w[0].toFixed(1) + ' to ' + w[1].toFixed(1) + ' s';
+        },
+        plotMsg() {
+            if (this.plotly === 'loading') return 'Loading the plotting library…';
+            if (this.plotly === 'failed') {
+                return 'Could not load the plotting library from cdn.plot.ly, so the plots cannot be shown. ' +
+                    'Check the internet connection and reload this page. Download CSV still works.';
+            }
+            return '';
+        }
+    },
+    watch: {
+        msg: function () { this.load(this.msg); }
+    },
+    methods: {
+        el(cls) {
+            const root = this.$el && this.$el.querySelector ? this.$el : document;
+            return root.querySelector(cls);
+        },
+        load(m) {
+            const p = m ? m.payload : null;
+            if (p && p.state === 'ready' && Array.isArray(p.rows)) {
+                const n = p.rows.length;
+                const d = { rows: new Array(n), t: new Array(n), ax: new Array(n), ay: new Array(n),
+                    az: new Array(n), shake: new Array(n), maxAbs: 0 };
+                for (let k = 0; k < n; k++) {
+                    const r = p.rows[k];
+                    const row = [r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]];
+                    d.rows[k] = row;
+                    d.t[k] = row[0]; d.ax[k] = row[1]; d.ay[k] = row[2]; d.az[k] = row[3]; d.shake[k] = row[7];
+                    d.maxAbs = Math.max(d.maxAbs, Math.abs(row[1]), Math.abs(row[2]), Math.abs(row[3]));
+                }
+                this.clearPlots();
+                this.recData = d;
+                this.recKey = (this.recKey || 0) + 1;
+                this.count = n;
+                this.span = n ? Number(d.t[n - 1]) || 0 : 0;
+                this.complete = p.complete !== false;
+                this.missing = Number(p.missingBatches) || 0;
+                this.pair = String(p.pair || '');
+                this.startedAt = Number(p.startedAt) || 0;
+                this.dur = Number(p.dur) || 0;
+                this.start = 0;
+                this.state = 'ready';
+                const self = this;
+                this.$nextTick(function () { self.draw(); });
+                return;
+            }
+            this.clearPlots();
+            this.recData = null;
+            if (p && p.state === 'recording') {
+                this.seconds = Math.max(0, Math.floor(Number(p.seconds) || 0));
+                this.dur = Number(p.dur) || 0;
+                this.state = 'recording';
+            } else {
+                this.state = 'idle';
+            }
+        },
+        windowRange() {
+            if (this.width === 'all') return [0, this.span];
+            const w = Number(this.width);
+            const s = Math.min(Math.max(0, Number(this.start) || 0), this.sliderMax);
+            return [s, s + w];
+        },
+        windowPoints() {
+            const d = this.recData;
+            const w = this.windowRange();
+            const pts = { x: [], y: [], z: [], t: [], text: [] };
+            for (let k = 0; k < d.t.length; k++) {
+                const t = d.t[k];
+                if (t >= w[0] && t <= w[1]) {
+                    pts.x.push(d.ax[k]); pts.y.push(d.ay[k]); pts.z.push(d.az[k]); pts.t.push(t);
+                    pts.text.push(t.toFixed(2));
+                }
+            }
+            return pts;
+        },
+        windowShape() {
+            const w = this.windowRange();
+            return { type: 'rect', xref: 'x', yref: 'paper', x0: w[0], x1: w[1], y0: 0, y1: 1,
+                fillcolor: '#0d5fb3', opacity: 0.12, line: { width: 0 }, layer: 'below' };
+        },
+        sphere() {
+            const r = 9.81, x = [], y = [], z = [];
+            for (let i = 0; i <= 24; i++) {
+                const th = Math.PI * i / 24, rx = [], ry = [], rz = [];
+                for (let j = 0; j <= 48; j++) {
+                    const ph = 2 * Math.PI * j / 48;
+                    rx.push(r * Math.sin(th) * Math.cos(ph));
+                    ry.push(r * Math.sin(th) * Math.sin(ph));
+                    rz.push(r * Math.cos(th));
+                }
+                x.push(rx); y.push(ry); z.push(rz);
+            }
+            return { x: x, y: y, z: z };
+        },
+        draw() {
+            const P = window.Plotly, d = this.recData;
+            const ts = this.el('.rec-timeseries'), sc = this.el('.rec-3d');
+            if (!P || !d || this.state !== 'ready' || this.gone || !ts || !sc) return;
+            const family = this.$el && this.$el.nodeType === 1 ? getComputedStyle(this.$el).fontFamily : '';
+            const font = { family: family || 'sans-serif', size: 12, color: '#1d2433' };
+            const series = [
+                { name: 'ax', y: d.ax, color: '#0d5fb3', dash: 'solid', width: 1.5 },
+                { name: 'ay', y: d.ay, color: '#b3261e', dash: 'solid', width: 1.5 },
+                { name: 'az', y: d.az, color: '#1f7a4d', dash: 'dash', width: 1.5 },
+                { name: 'shake level', y: d.shake, color: '#e0a800', dash: 'solid', width: 2.5 }
+            ];
+            const lines = series.map(function (s) {
+                return { type: 'scatter', mode: 'lines', name: s.name, x: d.t, y: s.y,
+                    line: { color: s.color, width: s.width, dash: s.dash }, hovertemplate: '%{y:.2f} m/s²' };
+            });
+            const config = { displaylogo: false, responsive: true };
+            P.newPlot(ts, lines, {
+                height: 260, margin: { l: 50, r: 10, t: 36, b: 40 }, font: font,
+                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+                xaxis: { title: { text: 'time (s)' }, range: [0, Math.max(this.span, 0.1)], zeroline: false, gridcolor: '#e5e5e5' },
+                yaxis: { title: { text: 'm/s²' }, gridcolor: '#e5e5e5', zerolinecolor: '#c9ced8' },
+                legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' },
+                hovermode: 'x unified', shapes: [this.windowShape()], uirevision: this.recKey
+            }, config);
+
+            const R = Math.max(15, Math.ceil(d.maxAbs * 1.05));
+            const axis = function (title) {
+                return { title: { text: title }, range: [-R, R], autorange: false, gridcolor: '#d9dde5', zerolinecolor: '#9aa3b2' };
+            };
+            const w = this.windowRange();
+            const pts = this.windowPoints();
+            const scale = [[0, '#9ec5f0'], [1, '#08306b']];
+            const ball = this.sphere();
+            P.newPlot(sc, [
+                { type: 'scatter3d', mode: 'markers', name: 'All readings', x: d.ax, y: d.ay, z: d.az,
+                    marker: { size: 2, color: '#8a93a3', opacity: 0.35 }, hoverinfo: 'skip' },
+                { type: 'scatter3d', mode: 'lines+markers', name: 'Chosen window', x: pts.x, y: pts.y, z: pts.z,
+                    text: pts.text,
+                    marker: { size: 3, color: pts.t, colorscale: scale, cmin: w[0], cmax: w[1], showscale: true,
+                        colorbar: { title: { text: 'time (s)' }, thickness: 12, len: 0.6 } },
+                    line: { width: 4, color: pts.t, colorscale: scale, cmin: w[0], cmax: w[1] },
+                    hovertemplate: 'time %{text} s<br>ax %{x:.2f}<br>ay %{y:.2f}<br>az %{z:.2f}<extra></extra>' },
+                { type: 'surface', name: 'Gravity sphere, 9.81 m/s²', x: ball.x, y: ball.y, z: ball.z,
+                    opacity: 0.1, showscale: false, colorscale: [[0, '#5f6b7d'], [1, '#5f6b7d']],
+                    hoverinfo: 'skip', showlegend: true }
+            ], {
+                height: 420, margin: { l: 0, r: 0, t: 30, b: 10 }, font: font, paper_bgcolor: 'rgba(0,0,0,0)',
+                showlegend: true, legend: { orientation: 'h', x: 0, y: 1 },
+                scene: { aspectmode: 'cube', xaxis: axis('ax (m/s²)'), yaxis: axis('ay (m/s²)'), zaxis: axis('az (m/s²)'),
+                    camera: { eye: { x: 1.6, y: 1.6, z: 0.8 } } },
+                uirevision: this.recKey
+            }, config);
+            this.drawn = true;
+        },
+        redrawWindow() {
+            const P = window.Plotly;
+            if (!P || !this.drawn) return;
+            const w = this.windowRange();
+            const pts = this.windowPoints();
+            P.relayout(this.el('.rec-timeseries'), { 'shapes[0].x0': w[0], 'shapes[0].x1': w[1] });
+            P.restyle(this.el('.rec-3d'), {
+                x: [pts.x], y: [pts.y], z: [pts.z], text: [pts.text],
+                'marker.color': [pts.t], 'marker.cmin': w[0], 'marker.cmax': w[1],
+                'line.color': [pts.t], 'line.cmin': w[0], 'line.cmax': w[1]
+            }, [1]);
+        },
+        clearPlots() {
+            const P = window.Plotly;
+            if (P && this.drawn) {
+                const ts = this.el('.rec-timeseries'), sc = this.el('.rec-3d');
+                if (ts) P.purge(ts);
+                if (sc) P.purge(sc);
+            }
+            this.drawn = false;
+        },
+        onSlide(e) {
+            this.start = Math.min(Math.max(0, Number(e.target.value) || 0), this.sliderMax);
+            this.redrawWindow();
+        },
+        onWidth(e) {
+            this.width = e.target.value;
+            this.start = Math.min(this.start, this.sliderMax);
+            this.redrawWindow();
+        },
+        download() {
+            const d = this.recData;
+            if (!d) return;
+            const lines = ['time_s,ax,ay,az,gx,gy,gz,shake'];
+            for (let k = 0; k < d.rows.length; k++) {
+                lines.push(d.rows[k].map(function (v) { return v === null || v === undefined ? '' : String(v); }).join(','));
+            }
+            const p2 = function (n) { return String(n).padStart(2, '0'); };
+            const t = new Date(this.startedAt || Date.now());
+            const stamp = t.getFullYear() + p2(t.getMonth() + 1) + p2(t.getDate()) + '-' +
+                p2(t.getHours()) + p2(t.getMinutes()) + p2(t.getSeconds());
+            const name = (this.pair || 'phone').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+            const url = URL.createObjectURL(new Blob([lines.join('\\n') + '\\n'], { type: 'text/csv' }));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'shake-recording-' + name + '-' + stamp + '.csv';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+        },
+        loadPlotly() {
+            // One <script> tag for the whole dashboard, however many panels are open.
+            const w = window;
+            if (w.Plotly) return Promise.resolve(w.Plotly);
+            if (!w.ece270PlotlyLoading) {
+                w.ece270PlotlyLoading = new Promise(function (resolve, reject) {
+                    const s = document.createElement('script');
+                    s.src = '${PLOTLY_URL}';
+                    s.integrity = '${PLOTLY_SRI}';
+                    s.crossOrigin = 'anonymous';
+                    s.async = true;
+                    s.onload = function () { if (w.Plotly) resolve(w.Plotly); else reject(new Error('no Plotly')); };
+                    s.onerror = function () { s.remove(); reject(new Error('could not load Plotly')); };
+                    document.head.appendChild(s);
+                }).catch(function (err) { w.ece270PlotlyLoading = null; throw err; });
+            }
+            return w.ece270PlotlyLoading;
+        }
+    },
+    mounted() {
+        this.gone = false;
+        this.drawn = false;
+        this.load(this.msg);
+        const self = this;
+        this.loadPlotly().then(function () {
+            if (self.gone) return;
+            self.plotly = 'ready';
+            self.$nextTick(function () { self.draw(); });
+        }).catch(function () {
+            if (!self.gone) self.plotly = 'failed';
+        });
+    },
+    unmounted() {
+        this.clearPlots();
+        this.gone = true;
+    }
+};
+</script>
+
+<style>
+.shake-recording { display: flex; flex-direction: column; gap: 8px; width: 100%; color: #1d2433; }
+.shake-recording .rec-status { font-size: 16px; }
+.shake-recording .rec-status.rec-recording { color: #0d5fb3; }
+.shake-recording .rec-status.rec-incomplete { color: #8a4b00; }
+.shake-recording .rec-detail, .shake-recording .rec-caption, .shake-recording .rec-window { font-size: 13px; color: #5b6475; }
+.shake-recording .rec-body { display: flex; flex-direction: column; gap: 6px; }
+.shake-recording .rec-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; }
+.shake-recording .rec-control { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.shake-recording .rec-slider { width: 260px; accent-color: #0d5fb3; }
+.shake-recording .rec-width { appearance: auto; border: 1px solid #c9ced8; border-radius: 4px; padding: 2px 6px; background: #ffffff; }
+.shake-recording .rec-download { background: #0d5fb3; color: #ffffff; border-radius: 4px; padding: 6px 14px; font-size: 14px; }
+.shake-recording .rec-download:hover { background: #0a4c8f; }
+.shake-recording .rec-plot-msg { font-size: 14px; color: #5b6475; }
+.shake-recording .rec-timeseries { width: 100%; min-height: 260px; }
+.shake-recording .rec-3d-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
+.shake-recording .rec-3d { flex: 0 1 640px; min-width: 320px; min-height: 420px; }
+.shake-recording .rec-3d-row .rec-caption { flex: 1 1 240px; max-width: 520px; }
+</style>`;
 
 const STARTER_INFO = `# Shake Alarm
 
 **Already built for you (don't change):** pairing with your phone, the connection status,
-and the node that sends commands back to your phone.
+the Recording panel, and the node that sends commands back to your phone.
 
 **You build** the part in the middle:
 
@@ -318,13 +754,13 @@ Then open http://127.0.0.1:1880/dashboard, type your pairing name, and shake you
 function studentFlow(withSolution) {
   const z = id('student-tab');
   const B = 'student-broker';
-  const routerWires = withSolution ? [[id('s-shake')]] : [[]];
+  const routerWires = withSolution ? [[id('s-shake'), id('s-rec')]] : [[id('s-rec')]];
   const nodes = [
     { id: z, type: 'tab', label: 'Shake Alarm', disabled: false, info: STARTER_INFO },
     comment('s-c-readme', z, 'READ ME: Shake Alarm (double-click)', STARTER_INFO, 170, 40),
     comment('s-c-pair', z, 'Pairing and connection (pre-built)', '', 180, 100),
     uiTextInput('s-pair-in', z, 's-g-pair', 1, 'Pairing name (same as on your phone)', 'pair', 170, 140, [[id('s-pair')]]),
-    fn('s-pair', z, 'pair with my phone', CODE.pair, 2, 420, 140, [[id('s-mqtt-in')], [id('s-pair-info')]]),
+    fn('s-pair', z, 'pair with my phone', CODE.pair, 3, 420, 140, [[id('s-mqtt-in')], [id('s-pair-info')], [id('s-rec-panel')]]),
     inject('s-restore-tick', z, 'after every deploy', { once: true, onceDelay: '1' }, 150, 60, [[id('s-restore')]]),
     fn('s-restore', z, 're-pair after deploy', CODE.restore, 1, 400, 60, [[id('s-pair')]]),
     mqttIn('s-mqtt-in', z, 'my phone', B, '', 640, 120, [[id('s-router')]]),
@@ -348,11 +784,22 @@ function studentFlow(withSolution) {
       withSolution ? [[id('s-thr-store'), id('s-slider')]] : [[id('s-thr-store')]]),
     change('s-thr-store', z, 'store threshold', setFlow('threshold'), 450, 660, [[]]),
 
+    // Recording (pre-built): Record on the phone -> fast readings in batches -> one recording -> plots + CSV
+    comment('s-c-record', z, 'Recording from the phone (pre-built)', '', 1190, 60),
+    inject('s-rec-tick', z, 'every second', { repeat: '1', topic: 'tick' }, 950, 200, [[id('s-rec')]]),
+    fn('s-rec', z, 'recording collector', CODE.recorder, 1, 1190, 160, [[id('s-rec-panel')]]),
+    {
+      id: id('s-rec-panel'), type: 'ui-template', z, group: id('s-g-record'), page: '', ui: '', name: 'Recording panel',
+      order: 1, width: '0', height: '0', head: '', format: RECORDING_PANEL, storeOutMessages: true, passthru: false,
+      resendOnRefresh: true, templateScope: 'local', className: '', x: 1440, y: 160, wires: [[]],
+    },
+
     // Dashboard layout
     uiPage('s-page', 'Shake Alarm', '/shake', 1),
     uiGroup('s-g-pair', 'Pair with your phone', 's-page', 4, 1),
     uiGroup('s-g-motion', "My phone's motion", 's-page', 8, 2),
     uiGroup('s-g-control', 'Alarm control', 's-page', 4, 3),
+    uiGroup('s-g-record', 'Recording', 's-page', 12, 4),
     uiBase(), uiTheme(),
     mqttBroker(B, 'Class broker (student)', cfg.studentUser, broker.studentPass, false),
   ];
@@ -614,6 +1061,7 @@ export const CONFIG = {
   username: ${JSON.stringify(cfg.studentUser)},
   defaultThreshold: ${Number(cfg.defaultThreshold)},
   shakeScaleMax: ${Number(cfg.shakeScaleMax)},
+  recordSeconds: ${Number(cfg.recordSeconds)},
   autoPauseMinutes: ${Number(cfg.autoPauseMinutes)},
 };
 `;
