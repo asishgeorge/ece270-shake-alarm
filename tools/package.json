@@ -6,8 +6,9 @@
   "scripts": {
     "build-flows": "node build-flows.mjs",
     "test": "node --test logic.test.mjs",
-    "sim": "node sim.mjs",
-    "e2e": "node e2e.mjs"
+    "broker-check": "node --env-file-if-exists=../.env.local broker-check.mjs",
+    "e2e": "node --env-file-if-exists=../.env.local e2e.mjs",
+    "sim": "node --env-file-if-exists=../.env.local sim.mjs"
   },
   "dependencies": {
     "mqtt": "5.16.1"

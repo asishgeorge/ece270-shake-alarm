@@ -28,7 +28,7 @@ So the phone is the sensor and the actuator, the laptop is the controller, and t
 | Phase | What | Status |
 |---|---|---|
 | **1. End-to-end build** | Phone page, student starter + solution flows, Class Console, local broker, unit tests, browser end-to-end test, 30-student simulation | **Done and tested locally (2026-11-04)** |
-| **2. Real phones + cloud broker** | Create the HiveMQ cluster, publish the phone page on GitHub Pages, test on one iPhone and one Android, tune the default threshold (6 m/s²) on real phones, measure cloud round trips | Needs the HiveMQ account and the OK to publish the GitHub repo |
+| **2. Real phones + cloud broker** | Cloud broker, GitHub Pages, test on one iPhone and one Android, tune the default threshold (6 m/s²) on real phones | **Broker done and tested (EMQX, 2026-11-04).** Repo is on GitHub; the first Pages deploys timed out on GitHub's side. Real phones next. |
 | **3. Professor sign-off** | Demo the end-to-end system | — |
 | **4. Lecture add-ons** | Acknowledge button and state machine (SA-5), labelled recording + CSV logger + Orange workflow (SA-6), latency histogram (SA-4) | After sign-off |
 | **5. Materials** | Setup handout (Windows/Mac), step-by-step student guide in the style of the existing demo decks, QR-code slide, worksheets (RTM, state chart, STRIDE), instructor run sheets | After sign-off |
@@ -38,7 +38,7 @@ So the phone is the sensor and the actuator, the laptop is the controller, and t
 ## The system
 
 ```
- STUDENT PHONE (browser page)              CLOUD BROKER (HiveMQ, free)              STUDENT LAPTOP (Node-RED + Dashboard 2.0)
+ STUDENT PHONE (browser page)              CLOUD BROKER (EMQX, free)                STUDENT LAPTOP (Node-RED + Dashboard 2.0)
   motion sensor, 5 readings/s ─────►  ece270/pair/<name>/phone          ─────►  "phone readings" → student's nodes
   hello / in-use / offline ────────►  ece270/pair/<name>/phone/status   ─────►  (shake level → gauge, chart, switch,
   status in words  ◄────────────────  ece270/pair/<name>/cmd            ◄─────   ALERT/OK, filter) → "send to my phone"
@@ -46,7 +46,7 @@ So the phone is the sensor and the actuator, the laptop is the controller, and t
 
   ONLY IF "Share with class" IS ON:
   shake level, round trip ─────────►  ece270/class/phones/<name>        ─────►  CLASS CONSOLE (instructor's Node-RED):
-  decision (console mode)  ◄────────  ece270/class/cmd/<name>           ◄─────   table, fleet chart, earthquake detector,
+  decision (console mode)  ◄────────  ece270/class/cmd/all              ◄─────   table, fleet chart, earthquake detector,
   instructor's message  ◄───────────  ece270/class/broadcast            ◄─────   messages to phones, decides for phones
                                                                                  that pick "Class console"
 ```
@@ -57,9 +57,9 @@ So the phone is the sensor and the actuator, the laptop is the controller, and t
 | `ece270/pair/<name>/phone/status` | phone ↔ phone, laptop | 1 | `hello` on start, `in-use` reply if another phone has the same name, `offline` (Last Will) |
 | `ece270/pair/<name>/cmd` | laptop → phone | 1 | `{"cmd":"ALERT"\|"OK","t":<phone's timestamp>}`. Echoing `t` lets the phone time the round trip with its own clock. |
 | `ece270/pair/<name>/laptop` | laptop → phone | 1 | Heartbeat every 5 s with the laptop's last decision, so a phone that just started shows the current state |
-| `ece270/class/phones/<name>` | phone → console | 0 | `{"s","t","rtt","by"}`: shake level only, never raw readings |
-| `ece270/class/cmd/<name>` | console → phone | 1 | Same format as `cmd`, when the phone picks "Class console" |
-| `ece270/class/broadcast` | console → phones | 1 | `{"level":"info"\|"alert"\|"clear","text"}` |
+| `ece270/class/phones/<name>` | phone → console | 0 | `{"s","t","rtt","by"}` 2.5 times/s: shake level only, never raw readings |
+| `ece270/class/cmd/all` | console → phones | 1 | `{"t","d":{"<name>":{"cmd","t"}}}`: one combined message (at most 4/s) for every phone that lets the console decide. **Instructor only.** |
+| `ece270/class/broadcast` | console → phones | 1 | `{"level":"info"\|"alert"\|"clear","text"}`. **Instructor only.** |
 
 No message is retained, so nothing stays stored on the broker between classes.
 
@@ -91,17 +91,38 @@ No message is retained, so nothing stays stored on the broker between classes.
 
 ---
 
-## Known limits of the free HiveMQ plan (checked 2026-11-04)
+## Class broker: EMQX Cloud Serverless, free tier (set up 2026-11-04)
 
-> **Update, same day: HiveMQ's free Serverless plan is closed to new clusters and retires on 2026-12-31.** The class needs a different broker. The limits below describe the plan this design was first written for; the replacement's limits will be added once it's chosen.
+The plan was first written for HiveMQ Cloud's free plan. That plan closed to new sign-ups and retires on 2026-12-31, so the class uses **EMQX Cloud Serverless** instead.
 
-- **One permission per login, and no per-student topics.** Anyone with the class password can, in principle:
-  - subscribe to `ece270/#` and see other pairs' data;
-  - send a status change to another phone if they know its pairing name.
+| | |
+|---|---|
+| **Free each month** | 1 GB of traffic and 1 million session-minutes. The spend limit is 0, so the deployment is suspended rather than billed if the quota runs out. |
+| **Connections** | Up to 1,000; at most 100 new ones per second |
+| **Per client** | At most **10 publishes per second**, and 10 subscriptions |
+| **Logins** | `student` (shared with the class) and `instructor` |
+| **Deny rules** for `student` | Publish on `ece270/class/broadcast` and on `ece270/class/cmd/#`. Students can't fake the earthquake alert, instructor messages or class-console decisions. **Verified:** EMQX answers "Not authorized". |
+| **Still possible with the shared login** | Reading or writing another pair's topics if you know or wildcard its pairing name. That's the SA-8 lesson. The fix is per-pair logins with a `ece270/pair/${username}/#` rule, created through EMQX's API; it's optional and can be decided after sign-off. |
 
-  Pairing names keep this hard to do by accident. Doing it on purpose is the SA-8 lesson. Limit the student login's permission to `ece270/#`.
-- **10 GB per month.** After that, publishes are rejected ("Quota exceeded") until the next month. The simulation measured about **54 MB per 30-minute class** published by 30 phones; the broker's copies to laptops and the console roughly double or triple that, so about 150 MB per class. Check usage in the HiveMQ console now and then, and change the password if someone abuses it.
-- **No uptime guarantee.** Fallback: rebuild with a public broker host (data is then public; say so).
+**How the code fits the limits:**
+- **Phone:** sends 5 readings/s plus 2.5 class summaries/s = 7.5 publishes/s.
+- **Console:** sends one combined decisions message at most 4 times/s instead of one per phone. In an earthquake, 30 separate messages at once would break the 10/s limit.
+- **Laptops:** Node-RED connects only after pairing and disconnects after 15 minutes without the phone.
+- **Auto-pause:** the phone disconnects when it auto-pauses after 30 minutes.
+
+**Measured on EMQX** (from the TA's Mac to US-East, 2026-11-04):
+
+| Measure | Result |
+|---|---|
+| Browser end-to-end test | 16/16 checks passed |
+| Round trip, one real pair | median about 180 ms |
+| 30 phones + 30 laptops + console, 60 s: readings lost | 11 of 8,985 (0.12%, all QoS 0 readings) |
+| Shakes detected | 191 of 191, no false alarms |
+| Round trip under class load | median 231 ms, 95th percentile 341 ms, max 631 ms |
+| Earthquake alert | 30 of 30 phones, 1.55 s after the class started shaking; no false earthquakes |
+| Data | about 44 MB published per 30-minute class. With the broker's copies, roughly 100–150 MB of the 1 GB quota per class, so about 7–10 full-class sessions per month. |
+
+Real phones on mobile data will add some latency; this is measured in Phase 2.
 
 ---
 
@@ -323,7 +344,7 @@ No message is retained, so nothing stays stored on the broker between classes.
    - Lock your phone. Within about 15 s the broker notices the missing keepalive (s17) and publishes the phone's **Last Will** ("offline"). The laptop dashboard switches to "Your phone went offline".
    - Last Will isn't in the slides; it's a 2-minute extension.
 4. **Why WebSocket?** Browsers can't open raw TCP connections, so the phone runs MQTT *inside* a WebSocket. Compare that with polling a REST endpoint every 200 ms.
-5. **TLS in Wireshark.** Point the instructor laptop's Node-RED at the public broker on port 1883 and the JSON is readable. Point it at HiveMQ on port 8883 and it's encrypted. This also explains why the phone page must be HTTPS.
+5. **TLS in Wireshark.** Point the instructor laptop's Node-RED at the public broker on port 1883 and the JSON is readable. Point it at the class broker (EMQX) on port 8883 and it's encrypted. This also explains why the phone page must be HTTPS.
 6. **Addressing and gateways.**
    - The phone on cellular and the laptop on campus Wi-Fi both have private addresses behind NAT, so neither can reach the other directly.
    - Both connect *out* to the broker, which is why IoT uses brokers.
@@ -359,7 +380,7 @@ No message is retained, so nothing stays stored on the broker between classes.
 **What to do**
 1. **Spoofed alert (authorization).** The volunteer tells you their pairing name. From the instructor laptop, publish `{"cmd":"ALERT"}` to `ece270/pair/<name>/cmd`. Their phone says "Shake detected!" although nobody shook it. The round trip shows "—", because the forged message doesn't echo one of the phone's own timestamps: a hint at how to detect forgeries.
 
-   Everyone shares one class password, so anyone who knows (or sniffs) a pairing name can do this. The pairing name works like a weak shared secret. The fix is per-device logins with topic permissions, which the free HiveMQ plan doesn't offer.
+   Everyone shares one class password, so anyone who knows (or sniffs) a pairing name can do this. The pairing name works like a weak shared secret. The fix is per-device logins with topic permissions. EMQX supports this (a rule on `ece270/pair/${username}/#`), but each pair would then need its own login. Compare: the console topics *are* protected, because publishing there is denied to the student login. Try it and show the "Not authorized" reply.
 2. **False data injection (integrity).** Publish fake readings to the volunteer's data topic. Their dashboard shows an earthquake that never happened.
 
    The fix is sensor fusion (s34): a real shake moves the gyroscope too, so check that both agree. Signed messages with `seq` defend against replay (s21).
@@ -461,7 +482,7 @@ Run on 2026-11-04 on the TA's Mac: local Mosquitto 2.1.2 with logins, Node-RED 5
 
 **Not tested yet (Phase 2):**
 - real phone sensors (iPhone permission prompt, Android);
-- HiveMQ Cloud, including the TLS ports 8883/8884;
+- ~~the cloud broker~~ (done: EMQX, see above);
 - GitHub Pages hosting;
 - real cloud round trips;
 - the default threshold on real shakes;
@@ -477,7 +498,7 @@ Run on 2026-11-04 on the TA's Mac: local Mosquitto 2.1.2 with logins, Node-RED 5
 | Student starter flow + solution flow, generated from one script | Claude | Done |
 | Class Console (table, fleet chart, earthquake detector, decides for "Class console" phones, messages to phones) | Claude | Done |
 | Local broker script, unit tests, browser end-to-end test, 30-student simulation | Claude | Done |
-| HiveMQ account and two logins (`student` limited to `ece270/#`, `instructor`) | TA | Phase 2 |
+| EMQX deployment, two logins, two deny rules | TA | Done 2026-11-04 (checked with `npm run broker-check`) |
 | Publish the repo on GitHub and turn on Pages | TA, with Claude | Phase 2 |
 | Test on one iPhone and one Android; tune the default threshold; fix-up round | TA, with Claude | Phase 2 |
 | Lecture add-ons: Acknowledge (SA-5), labelled recording to CSV (SA-6), latency histogram (SA-4) | Claude | Phase 4 |
@@ -486,7 +507,7 @@ Run on 2026-11-04 on the TA's Mac: local Mosquitto 2.1.2 with logins, Node-RED 5
 
 **Per-term maintenance (about 1–2 h):**
 - Change both passwords.
-- Confirm the HiveMQ free plan and its limits haven't changed.
+- Confirm the EMQX free tier and its limits haven't changed, and run `npm run broker-check`.
 - Test the page on current iOS and Android.
 - Run the end-to-end test and simulation against current Node-RED and Dashboard 2.0.
 - Repeat the room test.
@@ -497,12 +518,12 @@ Run on 2026-11-04 on the TA's Mac: local Mosquitto 2.1.2 with logins, Node-RED 5
 
 | Risk | Fallback |
 |---|---|
-| Cloud broker down in class | Change `host` in `class-broker.json` to a public broker, rebuild, re-import. Data is then public, so say so. |
+| Cloud broker down or quota used up in class | Change `host` in `class-broker.json` to a public broker, rebuild, re-import. Data is then public, so say so. A second free EMQX deployment is allowed per account as a standby. |
 | A phone's sensors don't work (old phone, wrong browser, permission denied) | The page switches to "Simulate a shake" automatically; or pair with a neighbour |
 | Student's Node-RED won't start | Pair with a classmate; SA-0 should catch most of these a week earlier |
 | Lecture-room Wi-Fi blocks port 8883 | Phones use mobile data. Node-RED can connect through the WebSocket port 8884 instead (`wss://<host>:8884/mqtt`). |
 | Phone locks or the student switches apps | The page keeps the screen awake but browsers pause background tabs. Keep the page in the foreground. |
 | Two students pick the same pairing name | Both phones show a warning; one picks a new name |
-| Someone misuses the class password (spoofing, flooding, using up the 10 GB) | Change the password; check usage in the HiveMQ console |
+| Someone misuses the class password (spoofing pairs, flooding, using up the 1 GB) | Change the password; check usage in the EMQX console. Console topics are already protected by deny rules. |
 | Free plan limits change | Check each term. A paid plan or a self-hosted broker are the alternatives. |
 | Privacy concerns | No student IDs, motion data only, never location, private by default, sharing is opt-in and sends only the shake level, and nothing is retained on the broker |

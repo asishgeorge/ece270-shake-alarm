@@ -1,8 +1,9 @@
 {
-  "_readme": "The ONLY place the class broker is configured. After editing, run: cd tools && npm run build-flows. That regenerates phone/config.js and node-red/*.json. Never put a password in this file: the repo is public.",
-  "host": "YOUR-CLUSTER-ID.s1.eu.hivemq.cloud",
+  "_readme": "The ONLY place the class broker is configured. After editing, run: cd tools && npm run build-flows. That regenerates phone/config.js and node-red/*.json. Never put a password in this file: the repo is public. Passwords for local tests go in ../.env.local (git-ignored).",
+  "provider": "EMQX Cloud Serverless (free tier)",
+  "host": "z912aa6d.ala.us-east-1.emqxsl.com",
   "mqttTlsPort": 8883,
-  "websocketTlsPort": 8884,
+  "websocketTlsPort": 8084,
   "websocketPath": "/mqtt",
   "studentUser": "student",
   "instructorUser": "instructor",

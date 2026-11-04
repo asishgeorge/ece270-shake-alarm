@@ -42,8 +42,8 @@
     "type": "function",
     "z": "d8033978f947c8e9",
     "name": "track phones + class decisions",
-    "func": "// One message per shared phone, 5 per second: { s: shake level, t, rtt, by }\nconst name = msg.topic.split('/')[3];\nconst d = msg.payload || {};\nconst phones = flow.get('phones') || {};\nconst p = phones[name] || {};\nconst now = Date.now();\np.s = Number(d.s) || 0;\np.rtt = typeof d.rtt === 'number' ? d.rtt : p.rtt;\np.by = d.by || '?';\np.last = now;\np.max1s = Math.max(p.max1s || 0, p.s);\nconst threshold = flow.get('classThreshold') ?? 6;\nif (p.s > threshold) p.lastShake = now;\nphones[name] = p;\nflow.set('phones', phones);\n\n// When a phone chooses \"Class console\" as its decision maker, decide here (Level 3 / 6).\nif (p.by !== 'class') { p.lastCmd = null; return null; }\nconst cmd = p.s > threshold ? 'ALERT' : 'OK';\nif (cmd === p.lastCmd) return null;\np.lastCmd = cmd;\nreturn { topic: 'ece270/class/cmd/' + name, payload: JSON.stringify({ cmd: cmd, t: typeof d.t === 'number' ? d.t : null }) };",
-    "outputs": 1,
+    "func": "// One message per shared phone, 5 per second: { s: shake level, t, rtt, by }\nconst name = msg.topic.split('/')[3];\nconst d = msg.payload || {};\nconst phones = flow.get('phones') || {};\nconst p = phones[name] || {};\nconst now = Date.now();\np.s = Number(d.s) || 0;\np.rtt = typeof d.rtt === 'number' ? d.rtt : p.rtt;\np.by = d.by || '?';\np.last = now;\np.max1s = Math.max(p.max1s || 0, p.s);\nconst threshold = flow.get('classThreshold') ?? 6;\nif (p.s > threshold) p.lastShake = now;\nphones[name] = p;\nflow.set('phones', phones);\n\n// When a phone chooses \"Class console\" as its decision maker, decide here (Level 3 / 6).\n// \"send class decisions\" publishes all of them together, at most 4 times per second.\nif (p.by !== 'class') { p.cmd = null; return null; }\nconst cmd = p.s > threshold ? 'ALERT' : 'OK';\nif (cmd !== p.cmd) {\n    p.cmd = cmd;\n    p.cmdT = typeof d.t === 'number' ? d.t : null;\n    flow.set('decisionsChanged', true);\n}\nreturn null;",
+    "outputs": 0,
     "timeout": 0,
     "noerr": 0,
     "initialize": "",
@@ -52,11 +52,7 @@
     "info": "",
     "x": 400,
     "y": 120,
-    "wires": [
-      [
-        "fa5f669a00528237"
-      ]
-    ]
+    "wires": []
   },
   {
     "id": "fa5f669a00528237",
@@ -270,7 +266,29 @@
     "y": 300,
     "wires": [
       [
-        "531d77a9c5bda539"
+        "531d77a9c5bda539",
+        "3223204eb460f772"
+      ]
+    ]
+  },
+  {
+    "id": "3223204eb460f772",
+    "type": "function",
+    "z": "d8033978f947c8e9",
+    "name": "send class decisions",
+    "func": "// One combined message for every phone that lets the console decide. EMQX's free plan\n// allows each client 10 publishes per second, so 30 separate messages at once would be too many.\nif (!flow.get('decisionsChanged')) return null;\nflow.set('decisionsChanged', false);\nconst now = Date.now();\nconst d = {};\nfor (const [name, p] of Object.entries(flow.get('phones') || {})) {\n    if (p.by === 'class' && p.cmd && now - p.last < 5000) d[name] = { cmd: p.cmd, t: p.cmdT };\n}\nreturn { topic: 'ece270/class/cmd/all', payload: JSON.stringify({ t: now, d: d }) };",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 400,
+    "y": 360,
+    "wires": [
+      [
+        "fa5f669a00528237"
       ]
     ]
   },
@@ -884,7 +902,7 @@
     "id": "4df57093ba977687",
     "type": "mqtt-broker",
     "name": "Class broker (instructor)",
-    "broker": "YOUR-CLUSTER-ID.s1.eu.hivemq.cloud",
+    "broker": "z912aa6d.ala.us-east-1.emqxsl.com",
     "port": "8883",
     "tls": "9b176e1e4cc44a5a",
     "clientid": "",

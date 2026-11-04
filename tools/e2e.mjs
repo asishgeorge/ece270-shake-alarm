@@ -15,10 +15,13 @@ import { fileURLToPath } from 'node:url';
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'test-output');
 mkdirSync(OUT, { recursive: true });
 
-const PHONE_URL = process.env.PHONE_URL || 'http://localhost:8080/?broker=ws://localhost:9001&sim=1';
+// E2E_TARGET=class uses the class broker from phone/config.js (password STUDENT_PASS from ../.env.local).
+const CLASS = process.env.E2E_TARGET === 'class';
+const PHONE_URL = process.env.PHONE_URL || (CLASS ? 'http://localhost:8080/?sim=1' : 'http://localhost:8080/?broker=ws://localhost:9001&sim=1');
 const STUDENT_DASH = process.env.STUDENT_DASH || 'http://127.0.0.1:1880/dashboard/shake';
 const CONSOLE_DASH = process.env.CONSOLE_DASH || 'http://127.0.0.1:1881/dashboard/console';
-const PASSWORD = process.env.STUDENT_PASS || 'dev-student';
+const PASSWORD = CLASS ? process.env.STUDENT_PASS : 'dev-student';
+if (!PASSWORD) { console.error('E2E_TARGET=class needs STUDENT_PASS in ../.env.local'); process.exit(2); }
 const PAIR = 'e2e-otter-' + (10 + Math.floor(Math.random() * 90));
 
 const CHROME = process.env.CHROME_PATH || [

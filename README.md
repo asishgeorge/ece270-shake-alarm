@@ -4,9 +4,10 @@ A phone web page reads the phone's motion sensor and publishes it over MQTT. The
 
 The teaching plan, activities, slide mapping and test results are in [phone-shake-alarm.md](phone-shake-alarm.md).
 
-**Status:** Phase 1 (end-to-end build) is done and tested against a local broker. Phase 2 (cloud broker, GitHub Pages, real phones) is next.
-
-> **Broker change (2026-11-04):** HiveMQ Cloud's free Serverless plan no longer accepts new clusters and shuts down on 2026-12-31. The class broker will be a different provider (decision pending). Everything broker-specific lives in `class-broker.json`, so switching means editing that file and running `npm run build-flows`.
+**Status:**
+- **Phase 1 (end-to-end build):** done.
+- **Class broker:** EMQX Cloud Serverless, free tier, set up and tested (`npm run broker-check`, plus the browser test and the 30-student simulation against it).
+- **Next:** GitHub Pages and real phones.
 
 ## What's where
 
@@ -23,6 +24,7 @@ node-red/                GENERATED flows to import into Node-RED
   instructor-console.json  the Class Console
 tools/
   build-flows.mjs        generates phone/config.js and node-red/*.json from class-broker.json
+  broker-check.mjs       checks the class broker: logins, both ports, the deny rules
   logic.test.mjs         unit tests for phone/logic.js
   e2e.mjs                browser end-to-end test (headless Chrome)
   sim.mjs                30-student load simulation
@@ -78,19 +80,52 @@ Run these in `tools/`, with steps 1–5 above running:
 | `npm test` | Unit tests for the phone logic |
 | `npm run e2e` | 16 checks in real headless Chrome: pairing, readings, ALERT/OK in words, round trip, the three decision modes, console privacy and messages, name-clash warning. Screenshots go to `test-output/`. |
 | `npm run sim -- --phones 30 --seconds 90 --quake-at 45 --share` | 30 phones + 30 laptops + the real console: lost readings, missed shakes, false alarms, round trips, earthquake detection, false earthquakes, data volume |
+| `npm run broker-check` | The **class broker**: student and instructor logins on both ports, wrong password refused, deny rules work |
+| `E2E_TARGET=class npm run e2e` | The browser test against the class broker. Node-RED must run flows built with `--class-test` (below). |
+| `npm run sim -- --class --phones 30 --seconds 60 --share` | The simulation against the class broker. Keep it short: it uses the free quota. |
 
-## Going live (Phase 2)
+Tests against the class broker read the passwords from `../.env.local`, which git ignores:
 
-1. **HiveMQ Cloud** (free plan): create a cluster and two credentials.
-   - `student` with permission "Publish and Subscribe" on `ece270/#`.
-   - `instructor` with the same permission.
-   - Keep the passwords out of this repo.
-2. Put the cluster host in `class-broker.json`, then run `cd tools && npm run build-flows`.
-3. Publish this repo on GitHub. Under Settings → Pages → Source, choose "GitHub Actions". The workflow publishes only `phone/`.
-4. Open the Pages URL on one iPhone and one Android phone and run through the activity. Tune `defaultThreshold` if real shakes don't cross 6 m/s².
-5. Students import `node-red/student-starter.json`. In the broker settings (Security tab) they type the class password; the username is already filled in.
+```
+STUDENT_PASS=...
+INSTRUCTOR_PASS=...
+```
 
-**If port 8883 is blocked:** Node-RED can use the WebSocket port instead. Set the broker to `wss://<host>:8884/mqtt`.
+To give the local Node-RED instances the real passwords for `E2E_TARGET=class`:
+
+```sh
+node --env-file=../.env.local build-flows.mjs --class-test ../.local/flows-class
+# deploy those files as in step 4, run the test, then:
+rm -rf ../.local/flows-class        # it contains the real passwords in plain text
+```
+
+## The class broker (EMQX Cloud Serverless, free tier)
+
+Set up on 2026-11-04. Deployment: `z912aa6d.ala.us-east-1.emqxsl.com`.
+- **8883:** MQTT over TLS, used by Node-RED.
+- **8084:** WebSocket over TLS on `/mqtt`, used by the phone.
+
+| Setting | Value |
+|---|---|
+| Spend limit | 0 (free quota only: 1 GB of traffic and 1 million session-minutes per month; the deployment is suspended if the quota runs out) |
+| Logins | `student` (shared with the class), `instructor` |
+| Deny rules for `student` | Publish on `ece270/class/broadcast`; Publish on `ece270/class/cmd/#` |
+| Everything else | Allowed (EMQX allows anything not denied) |
+
+**Free-tier limits the code is built around:**
+- **Each client may publish at most 10 messages/s.** The phone sends 5 readings/s plus 2.5 class summaries/s, and the console sends one combined decisions message at most 4 times/s.
+- **Session-minutes are metered.** Students' Node-RED connects only after pairing and disconnects after 15 minutes without the phone. The phone disconnects when it auto-pauses after 30 minutes.
+- **At most 100 new connections per second** across the deployment.
+
+**If the broker ever changes:**
+1. Edit `class-broker.json` and run `npm run build-flows`.
+2. Commit the change. The phone page republishes by itself.
+3. Students re-import the starter flow.
+
+**For students:**
+- They import `node-red/student-starter.json`.
+- They type the class password in the broker settings (double-click "my phone", edit the broker, Security tab). The username is already filled in.
+- If port 8883 is blocked on a network, Node-RED can use `wss://<host>:8084/mqtt` instead.
 
 ## Design rules
 
@@ -98,5 +133,6 @@ Run these in `tools/`, with steps 1–5 above running:
 - **Private by default.** Raw readings go only to `ece270/pair/<name>/…`. Sharing with the class is opt-in and sends only the shake level.
 - **No flashing.** The status changes in words with a steady colour, at most once per second.
 - **No retained messages.** Nothing stays on the broker.
+- **Under 10 publishes/s per client,** and connected only while in use (free-tier limits).
 - **No passwords in the repo.** Node-RED doesn't export them, and the phone page asks for the password.
 - **Messages are text, never HTML.** Anything arriving over MQTT is displayed as plain text, because anyone with the class password can publish.

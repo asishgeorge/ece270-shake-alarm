@@ -7,10 +7,12 @@ import mqtt from './vendor/mqtt-5.16.1.esm.js';
 import { CONFIG } from './config.js';
 import {
   topics, validatePairName, randomPairName, PeakWindow, readingPayload, syntheticSample,
-  shakeLevel, parseCommand, roundTrip, StatusHold, localDecision, RollingMedian,
+  shakeLevel, parseCommand, roundTrip, StatusHold, localDecision, RollingMedian, classDecisionFor,
 } from './logic.js';
 
 const PUBLISH_MS = 200;          // 5 readings per second
+const SHARE_EVERY = 2;           // class summary every 2nd reading (2.5/s): with the readings that is
+                                 // 7.5 publishes/s, under EMQX's free-tier limit of 10 per client
 const LAPTOP_TIMEOUT_MS = 12000; // laptop heartbeat is every 5 s
 const BROADCAST_ALERT_MS = 20000;
 const NO_SENSOR_AFTER_MS = 2500;
@@ -30,7 +32,7 @@ const store = {
 };
 
 const S = {
-  client: null, cid: '', pair: '', T: null,
+  client: null, cid: '', pair: '', T: null, password: '', shareTick: 0, shareMax: 0, lastClassT: null,
   running: false, paused: false, startedAt: 0, timer: null,
   win: new PeakWindow(), seq: 0, sent: 0, sentSet: new Set(), sentQueue: [],
   sensor: 'starting', sensorRate: 0, sensorStartedAt: 0, burstUntil: 0, level: 0,
@@ -102,6 +104,7 @@ async function requestMotionPermission() {
 
 function start(pair, password, permission) {
   Object.assign(S, {
+    password, shareTick: 0, shareMax: 0, lastClassT: null,
     pair, T: topics(pair), running: true, paused: false, startedAt: Date.now(), seq: 0, sent: 0,
     laptopSeenAt: 0, laptopCmd: null, laptopCmdAt: 0, classCmd: null, lastRtt: null, nameConflict: false,
     hold: new StatusHold(1000), rtt: new RollingMedian(10), sentSet: new Set(), sentQueue: [],
@@ -167,10 +170,7 @@ function tick() {
   if (delayed) renderStatus(delayed);
   if (!S.running) return;
 
-  if (!S.paused && now - S.startedAt > CONFIG.autoPauseMinutes * 60000) {
-    S.paused = true;
-    $('paused').hidden = false;
-  }
+  if (!S.paused && now - S.startedAt > CONFIG.autoPauseMinutes * 60000) pause();
 
   if (S.sensor === 'starting' && performance.now() - S.sensorStartedAt > NO_SENSOR_AFTER_MS) S.sensor = 'none';
 
@@ -188,9 +188,14 @@ function tick() {
       rememberSent(now);
       S.sent += 1;
       if (S.share) {
-        S.client.publish(S.T.classPhone, JSON.stringify({
-          s: Math.round(S.level * 10) / 10, t: now, rtt: S.lastRtt, by: S.decider,
-        }), { qos: 0 });
+        // Every 2nd window, share the strongest of the two (so short shakes still count).
+        S.shareMax = Math.max(S.shareMax, S.level);
+        if (++S.shareTick % SHARE_EVERY === 0) {
+          S.client.publish(S.T.classPhone, JSON.stringify({
+            s: Math.round(S.shareMax * 10) / 10, t: now, rtt: S.lastRtt, by: S.decider,
+          }), { qos: 0 });
+          S.shareMax = 0;
+        }
       }
     }
     // Level 1: the phone decides by itself, even with no network at all.
@@ -199,6 +204,25 @@ function tick() {
 
   if (S.broadcastLevel === 'alert' && now - S.broadcastAt > BROADCAST_ALERT_MS) hideBroadcast();
   renderInfo(now);
+}
+
+// Auto-pause also disconnects: the free broker plan counts connected minutes.
+function pause() {
+  S.paused = true;
+  $('paused').hidden = false;
+  if (S.client) {
+    if (S.client.connected) S.client.publish(S.T.phoneStatus, JSON.stringify({ state: 'offline', cid: S.cid }), { qos: 1 });
+    S.client.end(false);
+    S.client = null;
+  }
+  setConn('Paused (disconnected)');
+}
+
+function resume() {
+  S.paused = false;
+  S.startedAt = Date.now();
+  $('paused').hidden = true;
+  connect(S.password);
 }
 
 function rememberSent(t) {
@@ -249,7 +273,7 @@ function connect(password) {
 function subscribeClass(on) {
   const c = S.client;
   if (!c) return;
-  const list = [S.T.classCmd, S.T.classBroadcast];
+  const list = [S.T.classDecisions, S.T.classBroadcast];
   if (on) c.subscribe(list, { qos: 1 });
   else c.unsubscribe(list);
 }
@@ -281,11 +305,13 @@ function onMessage(topic, buf) {
     } else if (firstContact && S.decider === 'laptop' && S.shown === 'WAIT') {
       renderStatus('WAIT');
     }
-  } else if (topic === T.classCmd) {
-    const c = parseCommand(text);
+  } else if (topic === T.classDecisions) {
+    const c = classDecisionFor(text, S.pair);
     if (!c) return;
     S.classCmd = c.cmd;
-    if (S.decider === 'class') { noteRtt(c.t, now); requestStatus(c.cmd); }
+    if (S.decider !== 'class') return;
+    if (c.t !== S.lastClassT) { S.lastClassT = c.t; noteRtt(c.t, now); }
+    requestStatus(c.cmd);
   } else if (topic === T.classBroadcast) {
     const m = safeJson(text);
     if (!m) return;
@@ -401,7 +427,7 @@ function showNameConflict() {
 function initRunControls() {
   $('tap-shake').addEventListener('click', () => { S.burstUntil = Date.now() + 1500; });
   $('stop').addEventListener('click', () => stop());
-  $('resume').addEventListener('click', () => { S.paused = false; S.startedAt = Date.now(); $('paused').hidden = true; });
+  $('resume').addEventListener('click', resume);
 
   $('share').addEventListener('change', (e) => {
     S.share = e.target.checked;

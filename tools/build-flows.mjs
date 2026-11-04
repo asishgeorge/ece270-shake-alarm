@@ -9,6 +9,10 @@
 //   node build-flows.mjs --local <dir> [--student-pass x] [--instructor-pass y]
 //                                                flows for a local Mosquitto (localhost:1883, no TLS),
 //                                                with test passwords embedded, written to <dir> only.
+//   node --env-file=../.env.local build-flows.mjs --class-test <dir>
+//                                                flows for the class broker WITH the passwords from
+//                                                STUDENT_PASS / INSTRUCTOR_PASS embedded, for testing on
+//                                                this machine only. Refuses to write inside the repo.
 
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -20,11 +24,25 @@ const ROOT = resolve(HERE, '..');
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const LOCAL_DIR = opt('--local');
+const CLASS_TEST_DIR = opt('--class-test');
 const cfg = JSON.parse(readFileSync(join(ROOT, 'class-broker.json'), 'utf8'));
+
+if (CLASS_TEST_DIR) {
+  if (resolve(CLASS_TEST_DIR).startsWith(ROOT + '/') && !resolve(CLASS_TEST_DIR).startsWith(join(ROOT, '.local'))) {
+    console.error('--class-test embeds real passwords: write it outside the repo (or to .local/, which git ignores).');
+    process.exit(2);
+  }
+  if (!process.env.STUDENT_PASS || !process.env.INSTRUCTOR_PASS) {
+    console.error('--class-test needs STUDENT_PASS and INSTRUCTOR_PASS (run with --env-file=../.env.local).');
+    process.exit(2);
+  }
+}
 
 const broker = LOCAL_DIR
   ? { host: 'localhost', port: '1883', tls: false, studentPass: opt('--student-pass'), instructorPass: opt('--instructor-pass') }
-  : { host: cfg.host, port: String(cfg.mqttTlsPort), tls: true };
+  : CLASS_TEST_DIR
+    ? { host: cfg.host, port: String(cfg.mqttTlsPort), tls: true, studentPass: process.env.STUDENT_PASS, instructorPass: process.env.INSTRUCTOR_PASS }
+    : { host: cfg.host, port: String(cfg.mqttTlsPort), tls: true };
 
 // Stable ids, so regenerated files diff cleanly and re-imports replace rather than duplicate.
 const id = (key) => createHash('sha1').update('ece270-shake:' + key).digest('hex').slice(0, 16);
@@ -77,10 +95,10 @@ function tlsConfig() {
   };
 }
 
-function mqttBroker(key, name, user, pass) {
+function mqttBroker(key, name, user, pass, autoConnect = true) {
   const node = {
     id: id(key), type: 'mqtt-broker', name, broker: broker.host, port: broker.port,
-    tls: broker.tls ? TLS : '', clientid: '', autoConnect: true, usetls: broker.tls, protocolVersion: '4',
+    tls: broker.tls ? TLS : '', clientid: '', autoConnect, usetls: broker.tls, protocolVersion: '4',
     keepalive: '30', cleansession: true, autoUnsubscribe: true,
     birthTopic: '', birthQos: '0', birthRetain: 'false', birthPayload: '', birthMsg: {},
     closeTopic: '', closeQos: '0', closeRetain: 'false', closePayload: '', closeMsg: {},
@@ -156,12 +174,16 @@ if (!${PAIR_RE}.test(name)) {
     return [null, { payload: 'Use 4–32 lowercase letters, numbers or dashes, the same as on your phone.' }];
 }
 flow.set('pair', name);
+flow.set('pairedAt', Date.now());
 flow.set('lastReading', 0);
 flow.set('phoneState', null);
 flow.set('lastCmd', null);
+flow.set('online', true);
 node.status({ fill: 'green', shape: 'dot', text: name });
+// The laptop connects to the class broker only once paired (the free plan counts connected minutes).
 return [
     [
+        { action: 'connect' },
         { action: 'unsubscribe', topic: true },
         { action: 'subscribe', topic: { topic: 'ece270/pair/' + name + '/phone/#', qos: 0 } }
     ],
@@ -182,28 +204,50 @@ flow.set('phoneState', 'online');
 msg.t = r.t;   // when the phone took this reading; used to time the round trip
 return msg;`,
 
-  connection: `const pair = flow.get('pair');
+  connection: `// Output 1: status text. Output 2: disconnects from the broker after IDLE_MIN quiet minutes.
+const IDLE_MIN = 15;
+const pair = flow.get('pair');
 const count = flow.get('count') || 0;
 flow.set('count', 0);
-if (!pair) return { payload: 'Not paired yet. Type a pairing name above.' };
+if (!pair) return [{ payload: 'Not paired yet. Type a pairing name above.' }, null];
+if (!flow.get('online')) {
+    return [{ payload: 'Disconnected after ' + IDLE_MIN + ' minutes without your phone. Press Enter in the pairing box to reconnect.' }, null];
+}
+const now = Date.now();
 const last = flow.get('lastReading') || 0;
-const age = (Date.now() - last) / 1000;
-if (last && age < 3) return { payload: 'Receiving readings (' + count + ' per second)' };
-if (flow.get('phoneState') === 'offline') return { payload: 'Your phone went offline' };
-if (last) return { payload: 'No readings for ' + Math.round(age) + ' s' };
-return { payload: 'Waiting for a phone using "' + pair + '"' };`,
+const quietFor = now - Math.max(last, flow.get('pairedAt') || now);
+if (quietFor > IDLE_MIN * 60000) {
+    flow.set('online', false);
+    return [{ payload: 'Disconnected after ' + IDLE_MIN + ' minutes without your phone.' }, { action: 'disconnect' }];
+}
+const broker = flow.get('broker') || '';
+if (broker !== 'connected' && now - (flow.get('pairedAt') || now) > 8000) {
+    return [{ payload: 'Not connected to the class broker (' + (broker || 'no answer') + '). Check the password: double-click "my phone", edit the broker, Security tab.' }, null];
+}
+const age = (now - last) / 1000;
+if (last && age < 3) return [{ payload: 'Receiving readings (' + count + ' per second)' }, null];
+if (flow.get('phoneState') === 'offline') return [{ payload: 'Your phone went offline' }, null];
+if (last) return [{ payload: 'No readings for ' + Math.round(age) + ' s' }, null];
+return [{ payload: 'Waiting for a phone using "' + pair + '"' }, null];`,
+
+  brokerStatus: `// Remembers whether the "my phone" MQTT node is connected, for the status text.
+const text = String((msg.status && msg.status.text) || '');
+const state = /disconnected/.test(text) ? 'disconnected' : /connecting/.test(text) ? 'connecting'
+    : /connected/.test(text) ? 'connected' : text;
+flow.set('broker', state);
+return null;`,
 
   heartbeat: `// Lets your phone show "Laptop: Connected", and tells a phone that just (re)started
 // the laptop's current decision (the filter node only sends changes).
 const pair = flow.get('pair');
-if (!pair) return null;
+if (!pair || !flow.get('online')) return null;
 const beat = { state: 'online', last: flow.get('lastCmd') || null, t: Date.now() };
 return { topic: 'ece270/pair/' + pair + '/laptop', payload: JSON.stringify(beat) };`,
 
   send: `// Wire your "ALERT" / "OK" messages into this node. It addresses them to your phone.
 const pair = flow.get('pair');
-if (!pair) {
-    node.status({ fill: 'yellow', shape: 'ring', text: 'not paired yet' });
+if (!pair || !flow.get('online')) {
+    node.status({ fill: 'yellow', shape: 'ring', text: pair ? 'disconnected' : 'not paired yet' });
     return null;
 }
 const cmd = String(msg.payload).trim().toUpperCase();
@@ -258,7 +302,9 @@ function studentFlow(withSolution) {
     mqttIn('s-mqtt-in', z, 'my phone', B, '', 640, 120, [[id('s-router')]]),
     uiText('s-pair-info', z, 's-g-pair', 2, 'Pairing', 650, 180),
     inject('s-tick', z, 'every second', { repeat: '1', once: true }, 160, 240, [[id('s-conn')]]),
-    fn('s-conn', z, 'phone connection', CODE.connection, 1, 380, 240, [[id('s-phone-text')]]),
+    fn('s-conn', z, 'phone connection', CODE.connection, 2, 380, 240, [[id('s-phone-text')], [id('s-mqtt-in')]]),
+    { id: id('s-broker-status'), type: 'status', z, name: 'broker connection', scope: [id('s-mqtt-in')], x: 150, y: 200, wires: [[id('s-broker-fn')]] },
+    fn('s-broker-fn', z, 'remember broker state', CODE.brokerStatus, 0, 380, 200, []),
     uiText('s-phone-text', z, 's-g-pair', 3, 'Phone', 600, 240),
     inject('s-beat-tick', z, 'every 5 s', { repeat: '5', once: true, onceDelay: '1' }, 150, 300, [[id('s-beat')]]),
     fn('s-beat', z, "tell my phone I'm here", CODE.heartbeat, 1, 380, 300, [[id('s-mqtt-out')]]),
@@ -280,7 +326,7 @@ function studentFlow(withSolution) {
     uiGroup('s-g-motion', "My phone's motion", 's-page', 8, 2),
     uiGroup('s-g-control', 'Alarm control', 's-page', 4, 3),
     uiBase(), uiTheme(),
-    mqttBroker(B, 'Class broker (student)', cfg.studentUser, broker.studentPass),
+    mqttBroker(B, 'Class broker (student)', cfg.studentUser, broker.studentPass, false),
   ];
   if (broker.tls) nodes.push(tlsConfig());
 
@@ -342,11 +388,26 @@ phones[name] = p;
 flow.set('phones', phones);
 
 // When a phone chooses "Class console" as its decision maker, decide here (Level 3 / 6).
-if (p.by !== 'class') { p.lastCmd = null; return null; }
+// "send class decisions" publishes all of them together, at most 4 times per second.
+if (p.by !== 'class') { p.cmd = null; return null; }
 const cmd = p.s > threshold ? 'ALERT' : 'OK';
-if (cmd === p.lastCmd) return null;
-p.lastCmd = cmd;
-return { topic: 'ece270/class/cmd/' + name, payload: JSON.stringify({ cmd: cmd, t: typeof d.t === 'number' ? d.t : null }) };`,
+if (cmd !== p.cmd) {
+    p.cmd = cmd;
+    p.cmdT = typeof d.t === 'number' ? d.t : null;
+    flow.set('decisionsChanged', true);
+}
+return null;`,
+
+  decisions: `// One combined message for every phone that lets the console decide. EMQX's free plan
+// allows each client 10 publishes per second, so 30 separate messages at once would be too many.
+if (!flow.get('decisionsChanged')) return null;
+flow.set('decisionsChanged', false);
+const now = Date.now();
+const d = {};
+for (const [name, p] of Object.entries(flow.get('phones') || {})) {
+    if (p.by === 'class' && p.cmd && now - p.last < 5000) d[name] = { cmd: p.cmd, t: p.cmdT };
+}
+return { topic: 'ece270/class/cmd/all', payload: JSON.stringify({ t: now, d: d }) };`,
 
   dashboard: `const phones = flow.get('phones') || {};
 const now = Date.now();
@@ -440,7 +501,7 @@ function consoleFlow() {
     { id: z, type: 'tab', label: 'Class Console', disabled: false, info: CONSOLE_INFO },
     comment('c-readme', z, 'READ ME: Class Console (double-click)', CONSOLE_INFO, 170, 40),
     mqttIn('c-in', z, 'shared phones', B, 'ece270/class/phones/+', 150, 120, [[id('c-track')]]),
-    fn('c-track', z, 'track phones + class decisions', CONSOLE_CODE.track, 1, 400, 120, [[id('c-out')]]),
+    fn('c-track', z, 'track phones + class decisions', CONSOLE_CODE.track, 0, 400, 120, []),
     mqttOut('c-out', z, 'to phones', B, 1050, 260),
 
     inject('c-tick', z, 'every second', { repeat: '1', once: true }, 150, 200, [[id('c-dash')]]),
@@ -462,7 +523,8 @@ function consoleFlow() {
     },
     uiText('c-summary', z, 'c-g-class', 1, 'Now', 640, 240),
 
-    inject('c-quake-tick', z, 'every 250 ms', { repeat: '0.25', once: true }, 160, 300, [[id('c-quake')]]),
+    inject('c-quake-tick', z, 'every 250 ms', { repeat: '0.25', once: true }, 160, 300, [[id('c-quake'), id('c-decisions')]]),
+    fn('c-decisions', z, 'send class decisions', CONSOLE_CODE.decisions, 1, 400, 360, [[id('c-out')]]),
     fn('c-quake', z, 'earthquake detector', CONSOLE_CODE.quake, 2, 400, 300, [[id('c-out')], [id('c-quake-text'), id('c-notify')]]),
     uiText('c-quake-text', z, 'c-g-class', 2, 'Last earthquake', 660, 320),
     {
@@ -520,7 +582,7 @@ export const CONFIG = {
 
 // ------------------------------------------------------------------ write
 
-const outDir = LOCAL_DIR ? resolve(LOCAL_DIR) : join(ROOT, 'node-red');
+const outDir = LOCAL_DIR ? resolve(LOCAL_DIR) : CLASS_TEST_DIR ? resolve(CLASS_TEST_DIR) : join(ROOT, 'node-red');
 mkdirSync(outDir, { recursive: true });
 const write = (name, data) => {
   const path = join(outDir, name);
@@ -530,7 +592,7 @@ const write = (name, data) => {
 write('student-starter.json', studentFlow(false));
 write('student-solution.json', studentFlow(true));
 write('instructor-console.json', consoleFlow());
-if (!LOCAL_DIR) {
+if (!LOCAL_DIR && !CLASS_TEST_DIR) {
   writeFileSync(join(ROOT, 'phone', 'config.js'), phoneConfig());
   console.log('wrote', join(ROOT, 'phone', 'config.js'));
 }

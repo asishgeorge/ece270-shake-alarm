@@ -44,8 +44,11 @@ export function topics(pair) {
     cmd: `${base}/cmd`,                      // laptop -> phone, {"cmd":"ALERT"|"OK","t":...}, QoS 1
     laptop: `${base}/laptop`,                // laptop heartbeat every 5 s
     classPhone: `${ROOT}/class/phones/${pair}`, // only when "Share with class" is on
-    classCmd: `${ROOT}/class/cmd/${pair}`,      // class console -> phone, when it is the decision maker
-    classBroadcast: `${ROOT}/class/broadcast`,  // class console -> every sharing phone
+    // Class console -> phones that chose it as decision maker. ONE combined message for all
+    // phones, {"d":{"<name>":{"cmd","t"}}}, because EMQX's free tier allows each client to
+    // publish at most 10 messages per second. Only the instructor login may publish here.
+    classDecisions: `${ROOT}/class/cmd/all`,
+    classBroadcast: `${ROOT}/class/broadcast`,  // class console -> every sharing phone (instructor only)
   };
 }
 
@@ -101,6 +104,19 @@ export function syntheticSample(tMs, shaking, rand = Math.random) {
 }
 
 // ---------------------------------------------------------------- commands
+
+/** The class console's combined decisions message -> this phone's entry, or null. */
+export function classDecisionFor(text, pair) {
+  try {
+    const entry = JSON.parse(text)?.d?.[pair];
+    if (!entry) return null;
+    const cmd = String(entry.cmd ?? '').toUpperCase();
+    if (cmd !== 'ALERT' && cmd !== 'OK') return null;
+    return { cmd, t: Number.isFinite(entry.t) ? entry.t : null };
+  } catch {
+    return null;
+  }
+}
 
 /** Accepts the JSON the starter flow sends, or a bare "ALERT"/"OK" string. */
 export function parseCommand(text) {

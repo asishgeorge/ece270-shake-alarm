@@ -64,7 +64,7 @@
     "type": "function",
     "z": "98e3f94b01a2d59b",
     "name": "pair with my phone",
-    "func": "// Runs when you type a pairing name on the dashboard.\n// It subscribes to YOUR phone only: ece270/pair/<name>/phone/#\nconst name = String(msg.payload ?? '').trim().toLowerCase();\nif (!/^[a-z0-9][a-z0-9-]{2,30}[a-z0-9]$/.test(name)) {\n    node.status({ fill: 'red', shape: 'ring', text: 'invalid pairing name' });\n    return [null, { payload: 'Use 4–32 lowercase letters, numbers or dashes, the same as on your phone.' }];\n}\nflow.set('pair', name);\nflow.set('lastReading', 0);\nflow.set('phoneState', null);\nflow.set('lastCmd', null);\nnode.status({ fill: 'green', shape: 'dot', text: name });\nreturn [\n    [\n        { action: 'unsubscribe', topic: true },\n        { action: 'subscribe', topic: { topic: 'ece270/pair/' + name + '/phone/#', qos: 0 } }\n    ],\n    { payload: 'Paired with \"' + name + '\". Press Start on your phone.' }\n];",
+    "func": "// Runs when you type a pairing name on the dashboard.\n// It subscribes to YOUR phone only: ece270/pair/<name>/phone/#\nconst name = String(msg.payload ?? '').trim().toLowerCase();\nif (!/^[a-z0-9][a-z0-9-]{2,30}[a-z0-9]$/.test(name)) {\n    node.status({ fill: 'red', shape: 'ring', text: 'invalid pairing name' });\n    return [null, { payload: 'Use 4–32 lowercase letters, numbers or dashes, the same as on your phone.' }];\n}\nflow.set('pair', name);\nflow.set('pairedAt', Date.now());\nflow.set('lastReading', 0);\nflow.set('phoneState', null);\nflow.set('lastCmd', null);\nflow.set('online', true);\nnode.status({ fill: 'green', shape: 'dot', text: name });\n// The laptop connects to the class broker only once paired (the free plan counts connected minutes).\nreturn [\n    [\n        { action: 'connect' },\n        { action: 'unsubscribe', topic: true },\n        { action: 'subscribe', topic: { topic: 'ece270/pair/' + name + '/phone/#', qos: 0 } }\n    ],\n    { payload: 'Paired with \"' + name + '\". Press Start on your phone.' }\n];",
     "outputs": 2,
     "timeout": 0,
     "noerr": 0,
@@ -162,8 +162,8 @@
     "type": "function",
     "z": "98e3f94b01a2d59b",
     "name": "phone connection",
-    "func": "const pair = flow.get('pair');\nconst count = flow.get('count') || 0;\nflow.set('count', 0);\nif (!pair) return { payload: 'Not paired yet. Type a pairing name above.' };\nconst last = flow.get('lastReading') || 0;\nconst age = (Date.now() - last) / 1000;\nif (last && age < 3) return { payload: 'Receiving readings (' + count + ' per second)' };\nif (flow.get('phoneState') === 'offline') return { payload: 'Your phone went offline' };\nif (last) return { payload: 'No readings for ' + Math.round(age) + ' s' };\nreturn { payload: 'Waiting for a phone using \"' + pair + '\"' };",
-    "outputs": 1,
+    "func": "// Output 1: status text. Output 2: disconnects from the broker after IDLE_MIN quiet minutes.\nconst IDLE_MIN = 15;\nconst pair = flow.get('pair');\nconst count = flow.get('count') || 0;\nflow.set('count', 0);\nif (!pair) return [{ payload: 'Not paired yet. Type a pairing name above.' }, null];\nif (!flow.get('online')) {\n    return [{ payload: 'Disconnected after ' + IDLE_MIN + ' minutes without your phone. Press Enter in the pairing box to reconnect.' }, null];\n}\nconst now = Date.now();\nconst last = flow.get('lastReading') || 0;\nconst quietFor = now - Math.max(last, flow.get('pairedAt') || now);\nif (quietFor > IDLE_MIN * 60000) {\n    flow.set('online', false);\n    return [{ payload: 'Disconnected after ' + IDLE_MIN + ' minutes without your phone.' }, { action: 'disconnect' }];\n}\nconst broker = flow.get('broker') || '';\nif (broker !== 'connected' && now - (flow.get('pairedAt') || now) > 8000) {\n    return [{ payload: 'Not connected to the class broker (' + (broker || 'no answer') + '). Check the password: double-click \"my phone\", edit the broker, Security tab.' }, null];\n}\nconst age = (now - last) / 1000;\nif (last && age < 3) return [{ payload: 'Receiving readings (' + count + ' per second)' }, null];\nif (flow.get('phoneState') === 'offline') return [{ payload: 'Your phone went offline' }, null];\nif (last) return [{ payload: 'No readings for ' + Math.round(age) + ' s' }, null];\nreturn [{ payload: 'Waiting for a phone using \"' + pair + '\"' }, null];",
+    "outputs": 2,
     "timeout": 0,
     "noerr": 0,
     "initialize": "",
@@ -175,8 +175,44 @@
     "wires": [
       [
         "5bf6fea9cd3153d4"
+      ],
+      [
+        "5f39aa848fb2eec4"
       ]
     ]
+  },
+  {
+    "id": "d1832bd9e2478b93",
+    "type": "status",
+    "z": "98e3f94b01a2d59b",
+    "name": "broker connection",
+    "scope": [
+      "5f39aa848fb2eec4"
+    ],
+    "x": 150,
+    "y": 200,
+    "wires": [
+      [
+        "073ccdf71abeba90"
+      ]
+    ]
+  },
+  {
+    "id": "073ccdf71abeba90",
+    "type": "function",
+    "z": "98e3f94b01a2d59b",
+    "name": "remember broker state",
+    "func": "// Remembers whether the \"my phone\" MQTT node is connected, for the status text.\nconst text = String((msg.status && msg.status.text) || '');\nconst state = /disconnected/.test(text) ? 'disconnected' : /connecting/.test(text) ? 'connecting'\n    : /connected/.test(text) ? 'connected' : text;\nflow.set('broker', state);\nreturn null;",
+    "outputs": 0,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "info": "",
+    "x": 380,
+    "y": 200,
+    "wires": []
   },
   {
     "id": "5bf6fea9cd3153d4",
@@ -236,7 +272,7 @@
     "type": "function",
     "z": "98e3f94b01a2d59b",
     "name": "tell my phone I'm here",
-    "func": "// Lets your phone show \"Laptop: Connected\", and tells a phone that just (re)started\n// the laptop's current decision (the filter node only sends changes).\nconst pair = flow.get('pair');\nif (!pair) return null;\nconst beat = { state: 'online', last: flow.get('lastCmd') || null, t: Date.now() };\nreturn { topic: 'ece270/pair/' + pair + '/laptop', payload: JSON.stringify(beat) };",
+    "func": "// Lets your phone show \"Laptop: Connected\", and tells a phone that just (re)started\n// the laptop's current decision (the filter node only sends changes).\nconst pair = flow.get('pair');\nif (!pair || !flow.get('online')) return null;\nconst beat = { state: 'online', last: flow.get('lastCmd') || null, t: Date.now() };\nreturn { topic: 'ece270/pair/' + pair + '/laptop', payload: JSON.stringify(beat) };",
     "outputs": 1,
     "timeout": 0,
     "noerr": 0,
@@ -288,7 +324,7 @@
     "type": "function",
     "z": "98e3f94b01a2d59b",
     "name": "send to my phone (wire into here)",
-    "func": "// Wire your \"ALERT\" / \"OK\" messages into this node. It addresses them to your phone.\nconst pair = flow.get('pair');\nif (!pair) {\n    node.status({ fill: 'yellow', shape: 'ring', text: 'not paired yet' });\n    return null;\n}\nconst cmd = String(msg.payload).trim().toUpperCase();\nif (cmd !== 'ALERT' && cmd !== 'OK') {\n    node.warn('Send the text ALERT or OK to the phone, not: ' + msg.payload);\n    return null;\n}\nnode.status({ fill: cmd === 'ALERT' ? 'red' : 'green', shape: 'dot', text: cmd });\nflow.set('lastCmd', cmd);\nconst toPhone = {\n    topic: 'ece270/pair/' + pair + '/cmd',\n    payload: JSON.stringify({ cmd: cmd, t: typeof msg.t === 'number' ? msg.t : null })\n};\n// No clock times here: Node.js may have older time-zone rules than the laptop's browser.\nconst n = (flow.get('sentCount') || 0) + 1;\nflow.set('sentCount', n);\nreturn [toPhone, { payload: cmd + '  (command #' + n + ')' }];",
+    "func": "// Wire your \"ALERT\" / \"OK\" messages into this node. It addresses them to your phone.\nconst pair = flow.get('pair');\nif (!pair || !flow.get('online')) {\n    node.status({ fill: 'yellow', shape: 'ring', text: pair ? 'disconnected' : 'not paired yet' });\n    return null;\n}\nconst cmd = String(msg.payload).trim().toUpperCase();\nif (cmd !== 'ALERT' && cmd !== 'OK') {\n    node.warn('Send the text ALERT or OK to the phone, not: ' + msg.payload);\n    return null;\n}\nnode.status({ fill: cmd === 'ALERT' ? 'red' : 'green', shape: 'dot', text: cmd });\nflow.set('lastCmd', cmd);\nconst toPhone = {\n    topic: 'ece270/pair/' + pair + '/cmd',\n    payload: JSON.stringify({ cmd: cmd, t: typeof msg.t === 'number' ? msg.t : null })\n};\n// No clock times here: Node.js may have older time-zone rules than the laptop's browser.\nconst n = (flow.get('sentCount') || 0) + 1;\nflow.set('sentCount', n);\nreturn [toPhone, { payload: cmd + '  (command #' + n + ')' }];",
     "outputs": 2,
     "timeout": 0,
     "noerr": 0,
@@ -525,11 +561,11 @@
     "id": "aad783200e8ce507",
     "type": "mqtt-broker",
     "name": "Class broker (student)",
-    "broker": "YOUR-CLUSTER-ID.s1.eu.hivemq.cloud",
+    "broker": "z912aa6d.ala.us-east-1.emqxsl.com",
     "port": "8883",
     "tls": "9b176e1e4cc44a5a",
     "clientid": "",
-    "autoConnect": true,
+    "autoConnect": false,
     "usetls": true,
     "protocolVersion": "4",
     "keepalive": "30",

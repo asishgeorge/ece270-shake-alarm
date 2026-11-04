@@ -9,8 +9,11 @@
 // Usage: node sim.mjs [--phones 30] [--seconds 60] [--quake-at 30] [--share]
 //                     [--phone-url ws://localhost:9001] [--laptop-url mqtt://localhost:1883]
 //                     [--user student] [--pass dev-student]
+//                     [--class]   use the class broker from class-broker.json, password from STUDENT_PASS
+//                                 (npm run sim reads ../.env.local). Keep runs short: it uses the free quota.
 
 import mqtt from 'mqtt';
+import { readFileSync } from 'node:fs';
 import { topics, syntheticSample, PeakWindow, readingPayload, shakeLevel } from '../phone/logic.js';
 
 const args = process.argv.slice(2);
@@ -19,10 +22,14 @@ const N = Number(opt('--phones', 30));
 const SECONDS = Number(opt('--seconds', 60));
 const QUAKE_AT = Number(opt('--quake-at', 30));
 const SHARE = args.includes('--share');
-const PHONE_URL = opt('--phone-url', 'ws://localhost:9001');
-const LAPTOP_URL = opt('--laptop-url', 'mqtt://localhost:1883');
+const CLASS = args.includes('--class');
+const cfg = JSON.parse(readFileSync(new URL('../class-broker.json', import.meta.url), 'utf8'));
+const PHONE_URL = CLASS ? `wss://${cfg.host}:${cfg.websocketTlsPort}${cfg.websocketPath}` : opt('--phone-url', 'ws://localhost:9001');
+const LAPTOP_URL = CLASS ? `mqtts://${cfg.host}:${cfg.mqttTlsPort}` : opt('--laptop-url', 'mqtt://localhost:1883');
 const USER = opt('--user', 'student');
-const PASS = opt('--pass', 'dev-student');
+const PASS = opt('--pass', CLASS ? process.env.STUDENT_PASS : 'dev-student');
+if (CLASS && !PASS) { console.error('Set STUDENT_PASS in ../.env.local'); process.exit(2); }
+const SHARE_EVERY = 2;   // same as the phone page: class summary every 2nd reading
 const THRESHOLD = 6;
 
 const t0 = Date.now();
@@ -58,9 +65,11 @@ async function phone(i) {
   let nextBurst = Date.now() + 3000 + Math.random() * 6000;
   let lastRtt = null;
   let seq = 0;
+  let shareTick = 0;
+  let shareMax = 0;
 
   c.subscribe([T.cmd, T.laptop, T.phoneStatus], { qos: 1 });
-  if (SHARE) c.subscribe([T.classBroadcast, T.classCmd], { qos: 1 });
+  if (SHARE) c.subscribe([T.classBroadcast, T.classDecisions], { qos: 1 });
   publish(c, T.phoneStatus, { state: 'hello', cid }, 1);
 
   c.on('message', (topic, buf) => {
@@ -103,7 +112,13 @@ async function phone(i) {
     publish(c, T.readings, readingPayload(s, now, ++seq));
     sent.add(now);
     stats.readingsSent++;
-    if (SHARE) publish(c, T.classPhone, { s: Math.round(shakeLevel(s) * 10) / 10, t: now, rtt: lastRtt, by: 'laptop' });
+    if (SHARE) {
+      shareMax = Math.max(shareMax, shakeLevel(s));
+      if (++shareTick % SHARE_EVERY === 0) {
+        publish(c, T.classPhone, { s: Math.round(shareMax * 10) / 10, t: now, rtt: lastRtt, by: 'laptop' });
+        shareMax = 0;
+      }
+    }
   }, 200);
   return () => { clearInterval(timer); c.end(true); };
 }
@@ -129,10 +144,12 @@ async function laptop(i) {
 }
 
 // ------------------------------------------------------------------ run
-console.log(`Simulating ${N} phones + ${N} laptops for ${SECONDS} s (earthquake at ${QUAKE_AT} s, sharing ${SHARE ? 'on' : 'off'})`);
+console.log(`Simulating ${N} phones + ${N} laptops for ${SECONDS} s (earthquake at ${QUAKE_AT} s, sharing ${SHARE ? 'on' : 'off'}) on ${CLASS ? cfg.host : 'the local broker'}`);
+// Stagger connections: EMQX's free plan accepts at most 100 new connections per second.
+const stagger = (i) => new Promise((r) => setTimeout(r, i * 25));
 const stops = await Promise.all([
-  ...Array.from({ length: N }, (_, i) => laptop(i + 1)),
-  ...Array.from({ length: N }, (_, i) => phone(i + 1)),
+  ...Array.from({ length: N }, (_, i) => stagger(i).then(() => laptop(i + 1))),
+  ...Array.from({ length: N }, (_, i) => stagger(N + i).then(() => phone(i + 1))),
 ]);
 await new Promise((r) => setTimeout(r, SECONDS * 1000));
 stops.forEach((s) => s());

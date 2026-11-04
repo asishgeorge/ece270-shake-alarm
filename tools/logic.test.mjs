@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  shakeLevel, validatePairName, randomPairName, topics, PeakWindow, readingPayload,
+  shakeLevel, validatePairName, randomPairName, topics, PeakWindow, readingPayload, classDecisionFor,
   syntheticSample, parseCommand, roundTrip, StatusHold, localDecision, RollingMedian, GRAVITY,
 } from '../phone/logic.js';
 
@@ -24,6 +24,8 @@ test('topics are scoped under the pairing name', () => {
   assert.equal(t.readings, 'ece270/pair/calm-otter-42/phone');
   assert.equal(t.cmd, 'ece270/pair/calm-otter-42/cmd');
   assert.equal(t.classPhone, 'ece270/class/phones/calm-otter-42');
+  assert.equal(t.classDecisions, 'ece270/class/cmd/all', 'must stay under the instructor-only ece270/class/cmd/#');
+  assert.equal(t.classBroadcast, 'ece270/class/broadcast');
   assert.ok(t.phoneStatus.startsWith(t.readings + '/'), 'laptop gets readings + status with one phone/# subscription');
 });
 
@@ -58,6 +60,14 @@ test('commands: JSON, bare strings, junk', () => {
   assert.deepEqual(parseCommand('"OK"'), { cmd: 'OK', t: null });
   assert.equal(parseCommand('BOOM'), null);
   assert.equal(parseCommand('{not json'), null);
+});
+
+test('class decisions: pick this phone out of the combined message', () => {
+  const msg = JSON.stringify({ d: { 'calm-otter-42': { cmd: 'ALERT', t: 5 }, 'other-name-10': { cmd: 'OK', t: 6 } } });
+  assert.deepEqual(classDecisionFor(msg, 'calm-otter-42'), { cmd: 'ALERT', t: 5 });
+  assert.equal(classDecisionFor(msg, 'not-there-11'), null);
+  assert.equal(classDecisionFor('{"d":{"x-y-z":{"cmd":"BOOM"}}}', 'x-y-z'), null);
+  assert.equal(classDecisionFor('garbage', 'x-y-z'), null);
 });
 
 test('round trip only for timestamps this phone sent', () => {
