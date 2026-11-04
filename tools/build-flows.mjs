@@ -175,7 +175,6 @@ if (!${PAIR_RE}.test(name)) {
 }
 flow.set('pair', name);
 flow.set('pairedAt', Date.now());
-flow.set('broker', 'connecting');
 flow.set('lastReading', 0);
 flow.set('phoneState', null);
 flow.set('lastCmd', null);
@@ -221,12 +220,14 @@ if (quietFor > IDLE_MIN * 60000) {
     flow.set('online', false);
     return [{ payload: 'Disconnected after ' + IDLE_MIN + ' minutes without your phone.' }, { action: 'disconnect' }];
 }
+const age = (now - last) / 1000;
+// Readings arriving = the connection works, whatever else we think we know.
+if (last && age < 3) return [{ payload: 'Receiving readings (' + count + ' per second)' }, null];
+// flow.broker is set only by the "broker connection" status node, from the MQTT node's own status.
 const broker = flow.get('broker') || '';
 if (broker !== 'connected' && now - (flow.get('pairedAt') || now) > 8000) {
     return [{ payload: 'Not connected to the class broker (' + (broker || 'no answer') + '). Check the password: double-click "my phone", edit the broker, Security tab.' }, null];
 }
-const age = (now - last) / 1000;
-if (last && age < 3) return [{ payload: 'Receiving readings (' + count + ' per second)' }, null];
 if (flow.get('phoneState') === 'offline') return [{ payload: 'Your phone went offline' }, null];
 if (last) return [{ payload: 'No readings for ' + Math.round(age) + ' s' }, null];
 return [{ payload: 'Waiting for a phone using "' + pair + '"' }, null];`,
@@ -234,7 +235,6 @@ return [{ payload: 'Waiting for a phone using "' + pair + '"' }, null];`,
   restore: `// Clicking Deploy restarts the MQTT connection, and this laptop only connects once paired.
 // So if it was paired before the deploy, pair again automatically with the same name.
 const pair = flow.get('pair');
-flow.set('broker', '');
 if (!pair || !flow.get('online')) return null;
 return { payload: pair };`,
 
@@ -274,6 +274,20 @@ const n = (flow.get('sentCount') || 0) + 1;
 flow.set('sentCount', n);
 return [toPhone, { payload: cmd + '  (command #' + n + ')' }];`,
 
+  gaugeRate: `// The dashboard gauge animates every change over 1 second. At 5 readings per second the needle
+// never catches up and jumps unevenly, so the gauge gets ONE value per second: the strongest of that second.
+// (The chart and the alarm still get every reading.)
+const now = Date.now();
+const peak = Math.max(context.get('peak') || 0, msg.payload);
+if (now - (context.get('sentAt') || 0) < 1000) {
+    context.set('peak', peak);
+    return null;
+}
+context.set('sentAt', now);
+context.set('peak', 0);
+msg.payload = peak;
+return msg;`,
+
   shake: `const { ax, ay, az } = msg.payload;              // m/s², gravity included
 const g = Math.sqrt(ax*ax + ay*ay + az*az);      // about 9.8 when still
 msg.payload = +Math.abs(g - 9.81).toFixed(2);    // 0 = still, bigger = shaking
@@ -296,6 +310,8 @@ and the node that sends commands back to your phone.
 7. A **slider** wired into "store threshold".
 8. *Optional:* a **range** node set to "Scale and limit to the target range", 0–${cfg.shakeScaleMax} to 0–${cfg.shakeScaleMax},
    in front of the gauge and chart. A hard knock can reach 90+ m/s², which would overshoot the gauge.
+9. *Optional:* the gauge animates every change over 1 s, so at 5 readings per second its needle lags.
+   Put a **delay** node (Rate limit, 1 message per second, drop intermediate messages) in front of the gauge only.
 
 Then open http://127.0.0.1:1880/dashboard, type your pairing name, and shake your phone.`;
 
@@ -350,8 +366,9 @@ function studentFlow(withSolution) {
       {
         id: id('s-limit'), type: 'range', z, name: 'limit to the display scale', minin: '0', maxin: String(cfg.shakeScaleMax),
         minout: '0', maxout: String(cfg.shakeScaleMax), action: 'clamp', round: false, property: 'payload',
-        x: 560, y: 380, wires: [[id('s-gauge'), id('s-chart')]],
+        x: 560, y: 380, wires: [[id('s-gauge-rate'), id('s-chart')]],
       },
+      fn('s-gauge-rate', z, 'one value per second for the gauge', CODE.gaugeRate, 1, 800, 380, [[id('s-gauge')]]),
       {
         id: id('s-gauge'), type: 'ui-gauge', z, name: '', group: id('s-g-motion'), order: 1, value: 'payload', valueType: 'msg',
         width: 3, height: 3, gtype: 'gauge-half', gstyle: 'needle', title: 'Shake level', alwaysShowTitle: false,
