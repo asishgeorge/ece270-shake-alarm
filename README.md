@@ -2,11 +2,15 @@
 
 Students turn their own phone into an IoT sensor. A web page reads the phone's motion sensor and sends it over MQTT. The student's Node-RED decides **ALERT** or **OK** and sends the decision back, and the phone shows it in words. The instructor's **Class Console** sees only the phones whose owners opt in. Students need nothing but their own phone and laptop, on any network.
 
-This is the **instructor copy**. It contains the finished solution, the Class Console, the broker setup and the test tools. A separate student copy (starter flow and instructions only) will be made later.
+This is the **instructor copy**: the working flows, the Class Console, the broker setup and the test tools. A separate student copy will be made later.
 
-> **Before students get the activity:** this repo is public, so the solution flow is visible. Make it private, or move the phone page into the public student copy, before the activity runs.
+Students are second-years with basic Python at most: no JavaScript, Node-RED or git. So:
+- in **lectures** they use only their phone;
+- any **hands-on** activity will be a small change to the working flow, so there is no hidden "solution".
 
-The teaching plan (activities, lecture-slide mapping, test results, risks) is in [phone-shake-alarm.md](phone-shake-alarm.md).
+**Documents:**
+- **[lecture-demos.md](lecture-demos.md):** what the Shake Alarm teaches, as ten 5–15 minute lecture demos that need nothing but students' phones.
+- **[phone-shake-alarm.md](phone-shake-alarm.md):** the full plan, with slide-by-slide mapping, test results and risks.
 
 ```
  phone (web page)  --readings-->  class broker  -->  student's Node-RED  (gauge, chart, ALERT/OK logic)
@@ -76,12 +80,14 @@ local/node-red.sh restart    # clean slate before a demo: clears pairings, gauge
 
 ## Running it in class
 
-**Students:**
-1. Open the phone page.
-2. Install Node-RED and the dashboard (below).
-3. Import `node-red/student-starter.json`.
-4. Type the class password in the broker settings.
-5. Build the middle of the flow.
+**In lectures,** students only open the phone page; see [lecture-demos.md](lecture-demos.md).
+
+**For a hands-on activity** (to be designed), students would:
+1. Install Node-RED.
+2. Import a working flow.
+3. Make one small change.
+
+That keeps it within reach of Python-only second-years. The current `student-starter.json`, which has empty middle parts for students to build, is probably too much for them and may be retired.
 
 **Instructor:**
 - Run the Class Console and project http://127.0.0.1:1880/dashboard/console.
@@ -224,6 +230,7 @@ local/
   setup-node-red.sh        one-time Node-RED install for the instructor's laptop
   node-red.sh              start / stop / restart / status / log
   start-broker.sh          local test broker (offline tests only)
+lecture-demos.md           what it teaches: 10 lecture demos (phones only)
 phone-shake-alarm.md       teaching plan, slide mapping, test results, risks
 ```
 
